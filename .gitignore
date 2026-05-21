@@ -1,0 +1,32 @@
+# Maven
+backend/**/target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+application-local.yml
+
+# Node (if any)
+node_modules/
+package-lock.json
+
+# Logs
+*.log
+
+# 内部文档（不上传公开仓库）
+docs/
+
+# AI
+.claude/plans/
+.claude/projects/
