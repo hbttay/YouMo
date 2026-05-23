@@ -27,6 +27,16 @@ package-lock.json
 # 内部文档（不上传公开仓库）
 docs/
 
+# AI Prompt 工程（核心 IP，不上传公开仓库）
+youmo-prompts/
+
+# Sensitive config
+application-local.yml
+*.env.local
+*.env.*.local
+
 # AI
 .claude/plans/
 .claude/projects/
+.claude/scheduled_tasks.json
+.claude/settings.local.json
