@@ -11,6 +11,43 @@ const store = useBookStore()
 const newTaskText = ref('')
 const taskSaving = ref(false)
 
+// ── 负向约束 ──
+const newConstraintText = ref('')
+const constraintSaving = ref(false)
+
+function parseConstraints() {
+  if (!store.currentBook?.negative_constraints) return []
+  return store.currentBook.negative_constraints
+    .split('\n')
+    .map(s => s.trim())
+    .filter(s => s)
+}
+
+const constraints = computed(() => parseConstraints())
+
+async function saveConstraints(newList) {
+  constraintSaving.value = true
+  const payload = { negative_constraints: newList.join('\n') }
+  const res = await updateBook(route.params.id, payload)
+  if (res && res.data) {
+    store.currentBook.negative_constraints = res.data.negative_constraints
+  }
+  constraintSaving.value = false
+}
+
+async function addConstraint() {
+  const text = newConstraintText.value.trim()
+  if (!text) return
+  const updated = [...constraints.value, text]
+  await saveConstraints(updated)
+  newConstraintText.value = ''
+}
+
+async function deleteConstraint(index) {
+  const updated = constraints.value.filter((_, i) => i !== index)
+  await saveConstraints(updated)
+}
+
 function parseTasks() {
   if (!store.currentBook?.extra_attributes) return []
   try {
@@ -160,6 +197,35 @@ onMounted(() => {
         </ul>
 
         <p v-else class="task-empty">暂无任务，在上方添加待办事项</p>
+      </div>
+
+      <!-- 负向约束 -->
+      <div class="constraint-section">
+        <div class="constraint-header">
+          <h2>负向约束</h2>
+          <span class="constraint-desc">AI 续写时禁用的词汇/句式</span>
+        </div>
+
+        <form class="constraint-add" @submit.prevent="addConstraint">
+          <input
+            v-model="newConstraintText"
+            type="text"
+            class="constraint-input"
+            placeholder="添加禁用词或句式..."
+          />
+          <button type="submit" class="btn-add-constraint" :disabled="!newConstraintText.trim() || constraintSaving">
+            添加
+          </button>
+        </form>
+
+        <ul v-if="constraints.length" class="constraint-list">
+          <li v-for="(item, idx) in constraints" :key="idx" class="constraint-item">
+            <span class="constraint-text">{{ item }}</span>
+            <button class="btn-constraint-del" title="删除" @click="deleteConstraint(idx)">&times;</button>
+          </li>
+        </ul>
+
+        <p v-else class="constraint-empty">暂无负向约束，添加以降低 AI 套路化表达</p>
       </div>
     </template>
   </div>
@@ -398,6 +464,134 @@ onMounted(() => {
 }
 
 .task-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+  padding: 20px 0;
+  margin: 0;
+}
+
+/* ── 负向约束 ── */
+.constraint-section {
+  background: var(--bg-surface);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  padding: 24px 28px;
+  margin-top: 24px;
+}
+
+.constraint-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.constraint-header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.constraint-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.constraint-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.constraint-input {
+  flex: 1;
+  padding: 9px 14px;
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.constraint-input:focus {
+  outline: none;
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.08);
+}
+
+.btn-add-constraint {
+  padding: 9px 18px;
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.btn-add-constraint:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.btn-add-constraint:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.constraint-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.constraint-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 20px;
+  font-size: 13px;
+  transition: background 0.12s;
+}
+
+.constraint-item:hover {
+  background: #fee2e2;
+}
+
+.constraint-text {
+  color: #991b1b;
+  font-size: 13px;
+}
+
+.btn-constraint-del {
+  background: none;
+  border: none;
+  color: #f87171;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 50%;
+  line-height: 1;
+  transition: color 0.12s;
+  font-family: inherit;
+}
+
+.btn-constraint-del:hover {
+  color: #dc2626;
+}
+
+.constraint-empty {
   color: var(--text-muted);
   font-size: 14px;
   text-align: center;

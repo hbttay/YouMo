@@ -14,6 +14,7 @@ public class BookResponse {
     private String lengthType;
     private String status;
     private String extraAttributes;
+    private String negativeConstraints;
     private Long ownerId;
 
     public static BookResponse from(Book book) {
@@ -27,6 +28,7 @@ public class BookResponse {
         r.setLengthType(book.getLengthType().name());
         r.setStatus(book.getStatus().name());
         r.setExtraAttributes(book.getExtraAttributes());
+        r.setNegativeConstraints(book.getNegativeConstraints());
         r.setOwnerId(book.getOwner().getId());
         return r;
     }

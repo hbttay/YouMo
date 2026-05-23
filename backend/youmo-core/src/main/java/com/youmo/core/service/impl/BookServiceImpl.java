@@ -49,6 +49,7 @@ public class BookServiceImpl implements BookService {
         if (updates.getCivilityLevel() != null) book.setCivilityLevel(updates.getCivilityLevel());
         if (updates.getEstimatedWords() != null) book.setEstimatedWords(updates.getEstimatedWords());
         if (updates.getExtraAttributes() != null) book.setExtraAttributes(updates.getExtraAttributes());
+        if (updates.getNegativeConstraints() != null) book.setNegativeConstraints(updates.getNegativeConstraints());
         if (updates.getStatus() != null) book.setStatus(updates.getStatus());
         if (updates.getLengthType() != null) book.setLengthType(updates.getLengthType());
         if (updates.getCreationMode() != null) book.setCreationMode(updates.getCreationMode());

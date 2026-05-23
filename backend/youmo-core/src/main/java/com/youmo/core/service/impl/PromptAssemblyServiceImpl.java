@@ -92,6 +92,17 @@ public class PromptAssemblyServiceImpl implements PromptAssemblyService {
             }
         });
 
+        // ── Negative constraints (banned words/phrases) ──
+        if (book != null && book.getNegativeConstraints() != null && !book.getNegativeConstraints().isBlank()) {
+            sb.append("\n严禁使用以下词汇或句式（违者视为失败）：\n");
+            for (String line : book.getNegativeConstraints().split("\\R")) {
+                String trimmed = line.strip();
+                if (!trimmed.isEmpty()) {
+                    sb.append("- ").append(trimmed).append("\n");
+                }
+            }
+        }
+
         log.debug("Assembled prompt for book {}: {} chars", bookId, sb.length());
         return sb.toString();
     }

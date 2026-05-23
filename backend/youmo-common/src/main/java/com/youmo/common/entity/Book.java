@@ -81,6 +81,9 @@ public class Book extends BaseEntity {
     @Column(name = "extra_attributes", columnDefinition = "jsonb")
     private String extraAttributes;
 
+    @Column(name = "negative_constraints", columnDefinition = "text")
+    private String negativeConstraints;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_id", nullable = false)
     private User owner;

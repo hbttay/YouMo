@@ -50,6 +50,7 @@ public class BookController {
         book.setStatus(BookStatus.DRAFT);
         book.setEstimatedWords(req.getEstimatedWords());
         book.setExtraAttributes(req.getExtraAttributes());
+        book.setNegativeConstraints(req.getNegativeConstraints());
         User owner = new User();
         owner.setId(SecurityUtil.getCurrentUserId());
         book.setOwner(owner);
@@ -85,6 +86,7 @@ public class BookController {
         updates.setCivilityLevel(req.getCivilityLevel());
         updates.setEstimatedWords(req.getEstimatedWords());
         updates.setExtraAttributes(req.getExtraAttributes());
+        updates.setNegativeConstraints(req.getNegativeConstraints());
         if (req.getTargetLength() != null) {
             updates.setLengthType(LengthType.valueOf(req.getTargetLength()));
         } else if (req.getLengthType() != null) {
