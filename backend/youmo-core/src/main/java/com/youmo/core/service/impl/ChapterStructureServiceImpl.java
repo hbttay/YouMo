@@ -61,6 +61,18 @@ public class ChapterStructureServiceImpl implements ChapterStructureService {
 
     @Override
     @Transactional
+    public ChapterStructure updateNode(Long id, ChapterStructure updates) {
+        ChapterStructure node = chapterStructureRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(404, "大纲节点不存在"));
+        if (updates.getTitle() != null) node.setTitle(updates.getTitle());
+        if (updates.getNodeType() != null) node.setNodeType(updates.getNodeType());
+        if (updates.getSequence() != null) node.setSequence(updates.getSequence());
+        if (updates.getWritingGoal() != null) node.setWritingGoal(updates.getWritingGoal());
+        return chapterStructureRepository.save(node);
+    }
+
+    @Override
+    @Transactional
     public void delete(Long id) {
         if (!chapterStructureRepository.existsById(id)) {
             throw new BusinessException(404, "大纲节点不存在");

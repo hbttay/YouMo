@@ -8,8 +8,8 @@ import lombok.Data;
 @Data
 public class CreateBookRequest {
     private String title;
-    private String theme;
     private String coreIdea;
+    private String theme;
     private String toneLabels;
     private String oneSentence;
     private String targetReaderProfile;
@@ -17,9 +17,10 @@ public class CreateBookRequest {
     private Short romanceLevel = 1;
     private Short politicsLevel = 1;
     private Short civilityLevel = 5;
+    private String targetLength;
     private CreationMode creationMode;
     private CharacterMode characterMode;
     private LengthType lengthType;
     private Integer estimatedWords;
-    private Long ownerId;
+    private String extraAttributes;
 }

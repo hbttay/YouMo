@@ -1,6 +1,7 @@
 package com.youmo.core.service.impl;
 
 import com.youmo.common.entity.WorldSetting;
+import com.youmo.core.repository.BookRepository;
 import com.youmo.core.repository.WorldSettingRepository;
 import com.youmo.core.service.WorldSettingService;
 import java.util.Optional;
@@ -13,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class WorldSettingServiceImpl implements WorldSettingService {
 
     private final WorldSettingRepository worldSettingRepository;
+    private final BookRepository bookRepository;
 
     @Override
     public Optional<WorldSetting> getByBookId(Long bookId) {
@@ -37,7 +39,7 @@ public class WorldSettingServiceImpl implements WorldSettingService {
             ws.setExtraAttributes(setting.getExtraAttributes());
             return worldSettingRepository.save(ws);
         }
-        setting.setBook(null); // 由调用方设置
+        setting.setBook(bookRepository.getReferenceById(bookId));
         return worldSettingRepository.save(setting);
     }
 }

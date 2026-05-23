@@ -1,0 +1,13 @@
+# 本地开发配置模板
+# 复制此文件为 application-local.yml，填入实际值
+# application-local.yml 已在 .gitignore 中排除
+
+spring:
+  datasource:
+    password: your_db_password_here
+
+jwt:
+  secret: "your-jwt-secret-at-least-256-bits-for-hs256"
+
+deepseek:
+  api-key: "sk-your-deepseek-api-key"

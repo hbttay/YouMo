@@ -11,7 +11,7 @@ public interface ChapterStructureRepository extends JpaRepository<ChapterStructu
 
     List<ChapterStructure> findByBookId(Long bookId);
 
-    List<ChapterStructure> findByParentId(Long parentId);
+    List<ChapterStructure> findByParent_Id(Long parentId);
 
     List<ChapterStructure> findByBookIdAndNodeType(Long bookId, NodeType nodeType);
 }

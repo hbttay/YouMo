@@ -2,9 +2,14 @@ package com.youmo.api.controller;
 
 import com.youmo.api.dto.request.CreateBookRequest;
 import com.youmo.api.dto.response.BookResponse;
+import com.youmo.api.security.SecurityUtil;
 import com.youmo.common.base.ApiResponse;
 import com.youmo.common.entity.Book;
 import com.youmo.common.entity.User;
+import com.youmo.common.enums.BookStatus;
+import com.youmo.common.enums.CharacterMode;
+import com.youmo.common.enums.CreationMode;
+import com.youmo.common.enums.LengthType;
 import com.youmo.core.service.BookService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -28,8 +33,8 @@ public class BookController {
     public ApiResponse<BookResponse> create(@RequestBody CreateBookRequest req) {
         Book book = new Book();
         book.setTitle(req.getTitle());
-        book.setTheme(req.getTheme());
         book.setCoreIdea(req.getCoreIdea());
+        book.setTheme(req.getTheme());
         book.setToneLabels(req.getToneLabels());
         book.setOneSentence(req.getOneSentence());
         book.setTargetReaderProfile(req.getTargetReaderProfile());
@@ -37,20 +42,23 @@ public class BookController {
         book.setRomanceLevel(req.getRomanceLevel());
         book.setPoliticsLevel(req.getPoliticsLevel());
         book.setCivilityLevel(req.getCivilityLevel());
-        book.setCreationMode(req.getCreationMode());
-        book.setCharacterMode(req.getCharacterMode());
-        book.setLengthType(req.getLengthType());
+        book.setCreationMode(req.getCreationMode() != null ? req.getCreationMode() : CreationMode.LINEAR);
+        book.setCharacterMode(req.getCharacterMode() != null ? req.getCharacterMode() : CharacterMode.FIXED);
+        book.setLengthType(req.getTargetLength() != null
+                ? LengthType.valueOf(req.getTargetLength())
+                : req.getLengthType() != null ? req.getLengthType() : LengthType.MEDIUM);
+        book.setStatus(BookStatus.DRAFT);
         book.setEstimatedWords(req.getEstimatedWords());
-        // 设置 owner
+        book.setExtraAttributes(req.getExtraAttributes());
         User owner = new User();
-        owner.setId(req.getOwnerId());
+        owner.setId(SecurityUtil.getCurrentUserId());
         book.setOwner(owner);
         return ApiResponse.ok(BookResponse.from(bookService.create(book)));
     }
 
     @GetMapping
-    public ApiResponse<List<BookResponse>> listByOwner(@RequestBody Long ownerId) {
-        List<BookResponse> list = bookService.listByOwner(ownerId)
+    public ApiResponse<List<BookResponse>> listAll() {
+        List<BookResponse> list = bookService.listAll()
                 .stream().map(BookResponse::from).toList();
         return ApiResponse.ok(list);
     }
@@ -67,6 +75,27 @@ public class BookController {
         Book updates = new Book();
         updates.setTitle(req.getTitle());
         updates.setTheme(req.getTheme());
+        updates.setCoreIdea(req.getCoreIdea());
+        updates.setToneLabels(req.getToneLabels());
+        updates.setOneSentence(req.getOneSentence());
+        updates.setTargetReaderProfile(req.getTargetReaderProfile());
+        updates.setViolenceLevel(req.getViolenceLevel());
+        updates.setRomanceLevel(req.getRomanceLevel());
+        updates.setPoliticsLevel(req.getPoliticsLevel());
+        updates.setCivilityLevel(req.getCivilityLevel());
+        updates.setEstimatedWords(req.getEstimatedWords());
+        updates.setExtraAttributes(req.getExtraAttributes());
+        if (req.getTargetLength() != null) {
+            updates.setLengthType(LengthType.valueOf(req.getTargetLength()));
+        } else if (req.getLengthType() != null) {
+            updates.setLengthType(req.getLengthType());
+        }
+        if (req.getCreationMode() != null) {
+            updates.setCreationMode(req.getCreationMode());
+        }
+        if (req.getCharacterMode() != null) {
+            updates.setCharacterMode(req.getCharacterMode());
+        }
         Book updated = bookService.update(id, updates);
         return ApiResponse.ok(BookResponse.from(updated));
     }

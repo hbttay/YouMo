@@ -10,7 +10,7 @@ public interface BookService {
 
     Optional<Book> getById(Long id);
 
-    List<Book> listByOwner(Long ownerId);
+    List<Book> listAll();
 
     Book update(Long id, Book updates);
 

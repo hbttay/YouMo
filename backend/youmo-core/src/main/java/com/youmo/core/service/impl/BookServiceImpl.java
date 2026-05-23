@@ -28,8 +28,8 @@ public class BookServiceImpl implements BookService {
     }
 
     @Override
-    public List<Book> listByOwner(Long ownerId) {
-        return bookRepository.findByOwnerId(ownerId);
+    public List<Book> listAll() {
+        return bookRepository.findAll();
     }
 
     @Override
@@ -37,18 +37,22 @@ public class BookServiceImpl implements BookService {
     public Book update(Long id, Book updates) {
         Book book = bookRepository.findById(id)
                 .orElseThrow(() -> new BusinessException(404, "书籍不存在"));
-        book.setTitle(updates.getTitle());
-        book.setTheme(updates.getTheme());
-        book.setCoreIdea(updates.getCoreIdea());
-        book.setToneLabels(updates.getToneLabels());
-        book.setOneSentence(updates.getOneSentence());
-        book.setTargetReaderProfile(updates.getTargetReaderProfile());
-        book.setViolenceLevel(updates.getViolenceLevel());
-        book.setRomanceLevel(updates.getRomanceLevel());
-        book.setPoliticsLevel(updates.getPoliticsLevel());
-        book.setCivilityLevel(updates.getCivilityLevel());
-        book.setEstimatedWords(updates.getEstimatedWords());
-        book.setStatus(updates.getStatus());
+        if (updates.getTitle() != null) book.setTitle(updates.getTitle());
+        if (updates.getTheme() != null) book.setTheme(updates.getTheme());
+        if (updates.getCoreIdea() != null) book.setCoreIdea(updates.getCoreIdea());
+        if (updates.getToneLabels() != null) book.setToneLabels(updates.getToneLabels());
+        if (updates.getOneSentence() != null) book.setOneSentence(updates.getOneSentence());
+        if (updates.getTargetReaderProfile() != null) book.setTargetReaderProfile(updates.getTargetReaderProfile());
+        if (updates.getViolenceLevel() != null) book.setViolenceLevel(updates.getViolenceLevel());
+        if (updates.getRomanceLevel() != null) book.setRomanceLevel(updates.getRomanceLevel());
+        if (updates.getPoliticsLevel() != null) book.setPoliticsLevel(updates.getPoliticsLevel());
+        if (updates.getCivilityLevel() != null) book.setCivilityLevel(updates.getCivilityLevel());
+        if (updates.getEstimatedWords() != null) book.setEstimatedWords(updates.getEstimatedWords());
+        if (updates.getExtraAttributes() != null) book.setExtraAttributes(updates.getExtraAttributes());
+        if (updates.getStatus() != null) book.setStatus(updates.getStatus());
+        if (updates.getLengthType() != null) book.setLengthType(updates.getLengthType());
+        if (updates.getCreationMode() != null) book.setCreationMode(updates.getCreationMode());
+        if (updates.getCharacterMode() != null) book.setCharacterMode(updates.getCharacterMode());
         return bookRepository.save(book);
     }
 

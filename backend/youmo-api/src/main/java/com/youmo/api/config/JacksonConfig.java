@@ -2,6 +2,8 @@ package com.youmo.api.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.hibernate6.Hibernate6Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.fasterxml.jackson.datatype.jsr310.ser.LocalDateTimeSerializer;
 import java.time.LocalDateTime;
@@ -20,6 +22,8 @@ public class JacksonConfig {
         module.addSerializer(LocalDateTime.class,
                 new LocalDateTimeSerializer(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
         mapper.registerModule(module);
+        mapper.registerModule(new Hibernate6Module());
+        mapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
         return mapper;
     }
 }

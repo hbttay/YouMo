@@ -76,7 +76,7 @@ public class Book extends BaseEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 20)
-    private BookStatus status = BookStatus.DRAFT;
+    private BookStatus status;
 
     @Column(name = "extra_attributes", columnDefinition = "jsonb")
     private String extraAttributes;

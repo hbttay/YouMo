@@ -1,5 +1,6 @@
 package com.youmo.common.entity;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.youmo.common.base.BaseEntity;
 import com.youmo.common.enums.NodeStatus;
 import com.youmo.common.enums.NodeType;
@@ -60,4 +61,9 @@ public class ChapterStructure extends BaseEntity {
 
     @Column(name = "extra_attributes", columnDefinition = "jsonb")
     private String extraAttributes;
+
+    @JsonProperty("parent_id")
+    public Long getParentId() {
+        return parent != null ? parent.getId() : null;
+    }
 }

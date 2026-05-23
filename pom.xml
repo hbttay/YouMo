@@ -29,6 +29,7 @@
         <java.version>17</java.version>
         <flyway.version>10.22.0</flyway.version>
         <mybatis-spring-boot.version>3.0.4</mybatis-spring-boot.version>
+        <jjwt.version>0.12.6</jjwt.version>
     </properties>
 
     <dependencyManagement>

@@ -12,4 +12,10 @@ public interface UserService {
     Optional<User> getByEmail(String email);
 
     boolean existsByEmail(String email);
+
+    User login(String email, String rawPassword);
+
+    void changePassword(Long userId, String oldPassword, String newPassword);
+
+    User updateProfile(Long userId, String email);
 }

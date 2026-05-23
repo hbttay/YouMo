@@ -30,7 +30,7 @@ public class WorldSetting extends BaseEntity {
     @Column(name = "geography", columnDefinition = "text")
     private String geography;
 
-    @Column(name = "history_events", columnDefinition = "jsonb")
+    @Column(name = "history_events", columnDefinition = "text")
     private String historyEvents;
 
     @Column(name = "politics", columnDefinition = "text")

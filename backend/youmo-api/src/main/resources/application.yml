@@ -1,8 +1,8 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/youmo_dev?stringtype=unspecified
-    username: postgres
-    password: root
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/youmo_dev?stringtype=unspecified}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -17,18 +17,29 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
     baseline-version: 1
+    validate-on-migrate: false
 
-mybatis:
-  mapper-locations: classpath:mapper/**/*.xml
-  # type-aliases-package: com.youmo.common.entity  # 暂不启用，Entity 名 Character 与 java.lang.Character 冲突
-  configuration:
-    map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+# MyBatis — Phase 2 启用
+# mybatis:
+#   mapper-locations: classpath:mapper/**/*.xml
+#   configuration:
+#     map-underscore-to-camel-case: true
 
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
+
+# JWT — 生产环境通过环境变量注入
+jwt:
+  secret: ${JWT_SECRET:}
+  expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+
+# DeepSeek AI — 通过环境变量注入
+deepseek:
+  api-key: ${DEEPSEEK_API_KEY:}
+  base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
 
 logging:
   level:
     com.youmo: DEBUG
     org.flywaydb: INFO
+    org.springframework.security: INFO

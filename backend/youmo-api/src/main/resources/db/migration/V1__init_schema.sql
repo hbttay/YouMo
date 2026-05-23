@@ -1,6 +1,6 @@
 -- ============================================================================
 -- V1__init_schema.sql
--- 游墨（YouMo）MVP 核心表初始化
+-- 余墨（YouMo）MVP 核心表初始化
 -- 版本：v1.4
 -- 数据库：PostgreSQL 16
 -- 创建顺序：users → book → world_setting → chapter_structure → character

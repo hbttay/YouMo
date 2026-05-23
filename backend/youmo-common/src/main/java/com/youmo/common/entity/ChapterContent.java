@@ -1,6 +1,7 @@
 package com.youmo.common.entity;
 
 import com.youmo.common.base.BaseEntity;
+import com.youmo.common.enums.ChapterContentStatus;
 import com.youmo.common.enums.ContentSource;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -39,6 +40,10 @@ public class ChapterContent extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "source", length = 20)
     private ContentSource source;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", length = 20, nullable = false)
+    private ChapterContentStatus status = ChapterContentStatus.DRAFT;
 
     @Column(name = "storage_type", length = 10, columnDefinition = "varchar(10) default 'FULL'")
     private String storageType = "FULL";

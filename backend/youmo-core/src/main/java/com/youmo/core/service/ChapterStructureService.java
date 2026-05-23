@@ -17,5 +17,7 @@ public interface ChapterStructureService {
 
     void updateStatus(Long id, NodeStatus status);
 
+    ChapterStructure updateNode(Long id, ChapterStructure updates);
+
     void delete(Long id);
 }

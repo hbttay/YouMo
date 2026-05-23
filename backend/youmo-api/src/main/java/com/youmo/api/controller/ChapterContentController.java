@@ -2,6 +2,8 @@ package com.youmo.api.controller;
 
 import com.youmo.common.base.ApiResponse;
 import com.youmo.common.entity.ChapterContent;
+import com.youmo.common.entity.ChapterStructure;
+import com.youmo.core.repository.ChapterStructureRepository;
 import com.youmo.core.service.ChapterContentService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class ChapterContentController {
 
     private final ChapterContentService chapterContentService;
+    private final ChapterStructureRepository chapterStructureRepository;
 
     @GetMapping
     public ApiResponse<ChapterContent> getLatest(@PathVariable Long structureId) {
@@ -28,6 +31,7 @@ public class ChapterContentController {
 
     @PostMapping
     public ApiResponse<ChapterContent> save(@PathVariable Long structureId, @RequestBody ChapterContent content) {
+        content.setStructure(chapterStructureRepository.getReferenceById(structureId));
         return ApiResponse.ok(chapterContentService.save(content));
     }
 
