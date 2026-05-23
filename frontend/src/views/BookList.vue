@@ -5,6 +5,7 @@ import { useBookStore } from '@/stores/book'
 import { deleteBook } from '@/api/book'
 import { useRequest } from '@/composables/useRequest'
 import ModalConfirm from '@/components/ModalConfirm.vue'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import { STATUS_LABEL, CREATION_LABEL } from '@/utils/labels'
 
 const router = useRouter()
@@ -47,7 +48,7 @@ function cancelDelete() {
       <router-link to="/books/create" class="btn-primary">+ 新建书籍</router-link>
     </div>
 
-    <div v-if="store.loading" class="loading">加载中...</div>
+    <LoadingSpinner v-if="store.loading" />
 
     <div v-else-if="store.error" class="error">{{ store.error }}</div>
 

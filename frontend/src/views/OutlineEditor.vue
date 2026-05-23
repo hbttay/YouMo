@@ -1,7 +1,7 @@
 <template>
   <div class="outline-editor">
     <!-- ========== Back ========== -->
-    <router-link :to="`/books/${bookId}`" class="back-link">&larr; 返回详情</router-link>
+    <router-link :to="`/books/${bookId}`" class="back-link">&larr; {{ bookTitle || '返回详情' }}</router-link>
 
     <!-- ========== Header ========== -->
     <div class="editor-header">
@@ -9,6 +9,9 @@
       <div class="header-actions">
         <button v-if="tree.length > 0" class="btn btn-sm btn-outline" @click="expandAll">
           {{ allExpanded ? '折叠全部' : '展开全部' }}
+        </button>
+        <button v-if="tree.length > 0" class="btn btn-sm btn-outline" @click="viewMode = viewMode === 'list' ? 'mindmap' : 'list'">
+          {{ viewMode === 'list' ? '思维导图' : '列表视图' }}
         </button>
         <button class="btn btn-random" :disabled="outlineGenerating" @click="handleRandomOutline">
           {{ outlineGenerating ? '生成中...' : '随机大纲' }}
@@ -86,10 +89,7 @@
     </form>
 
     <!-- ========== Loading ========== -->
-    <div v-if="fetchLoading" class="state-msg">
-      <div class="loading-spinner"></div>
-      <span>加载中...</span>
-    </div>
+    <LoadingSpinner v-if="fetchLoading" />
 
     <!-- ========== Empty State ========== -->
     <div v-else-if="tree.length === 0" class="empty-state">
@@ -131,6 +131,11 @@
         </button>
       </div>
     </div>
+
+    <!-- ========== Mind Map View ========== -->
+    <template v-else-if="viewMode === 'mindmap'">
+      <MindMapView :tree="tree" :book-id="bookId" @navigate="handleMindMapNavigate" />
+    </template>
 
     <!-- ========== Tree ========== -->
     <template v-else>
@@ -381,6 +386,8 @@ import { useRequest } from '@/composables/useRequest'
 import { useDrafts } from '@/composables/useDrafts'
 import ModalConfirm from '@/components/ModalConfirm.vue'
 import RandomPreviewModal from '@/components/RandomPreviewModal.vue'
+import MindMapView from '@/components/MindMapView.vue'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import { NODE_TYPE, NODE_COLOR } from '@/utils/labels'
 
 const route = useRoute()
@@ -405,10 +412,14 @@ const synopsis = ref('')
 const synopsisSaving = ref(false)
 const synopsisSaved = ref(false)
 let synopsisTimer = null
+const bookTitle = ref('')
 
 async function loadSynopsis() {
   const res = await getBook(bookId)
-  if (res) synopsis.value = res.data?.core_idea || ''
+  if (res) {
+    synopsis.value = res.data?.core_idea || ''
+    bookTitle.value = res.data?.title || ''
+  }
 }
 
 async function saveSynopsis() {
@@ -438,6 +449,8 @@ const errorMsg = ref('')
 let successTimer = null
 
 const outlineGenerating = ref(false)
+
+const viewMode = ref('list') // 'list' | 'mindmap'
 
 const preview = ref({ show: false, type: 'outline', data: null })
 const genStatus = ref({})
@@ -556,6 +569,10 @@ function saveCollapsed() {
 }
 
 const allExpanded = computed(() => collapsedNodes.value.size === 0)
+
+function handleMindMapNavigate(node) {
+  setFocused(node)
+}
 
 function toggleCollapse(nodeId) {
   const next = new Set(collapsedNodes.value)

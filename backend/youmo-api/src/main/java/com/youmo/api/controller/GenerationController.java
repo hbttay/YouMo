@@ -74,23 +74,25 @@ public class GenerationController {
 
         new Thread(() -> {
             try {
-                String context = req.getContext();
-                if (context == null || context.isBlank()) {
+                String fullContext = req.getContext();
+                if (fullContext == null || fullContext.isBlank()) {
                     sendError(emitter, "前文内容不能为空");
                     return;
-                }
-                if (context.length() > 2000) {
-                    context = context.substring(context.length() - 2000);
                 }
 
                 // Use dynamic prompt assembly when bookId is provided
                 String systemPrompt;
                 if (req.getBookId() != null) {
                     systemPrompt = promptAssemblyService.buildContinuePrompt(req.getBookId(),
-                        promptConfig.get("assemble", FALLBACK_CONTINUE));
+                        promptConfig.get("assemble", FALLBACK_CONTINUE), fullContext);
                 } else {
                     systemPrompt = promptConfig.get("continue", FALLBACK_CONTINUE);
                 }
+
+                // Truncate for DeepSeek API payload
+                String context = fullContext.length() > 2000
+                    ? fullContext.substring(fullContext.length() - 2000)
+                    : fullContext;
 
                 String userMsg = "以下是一段小说正文，请直接从断点处接着往下写：\n\n"
                     + "---前文开始---\n" + context + "\n---前文结束---\n\n"

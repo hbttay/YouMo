@@ -40,3 +40,4 @@ application-local.yml
 .claude/projects/
 .claude/scheduled_tasks.json
 .claude/settings.local.json
+resume_ai_dev.docx

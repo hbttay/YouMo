@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { useBookStore } from '@/stores/book'
 import { updateBook } from '@/api/book'
 import { STATUS_LABEL, CREATION_LABEL, LENGTH_LABEL } from '@/utils/labels'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
 const route = useRoute()
 const store = useBookStore()
@@ -117,7 +118,7 @@ onMounted(() => {
 
 <template>
   <div class="book-detail">
-    <div v-if="store.loading" class="loading">加载中...</div>
+    <LoadingSpinner v-if="store.loading" />
 
     <div v-else-if="store.error" class="error">{{ store.error }}</div>
 

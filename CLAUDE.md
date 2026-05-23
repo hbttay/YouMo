@@ -2,8 +2,7 @@
 
 ## 🤖 当前会话 (2026-05-24，Tab A - 分析/全栈)
 
-**P0 进度：全部完成 ✅**
-- ✅ SSE 流式续写 | ✅ 提示词组装器 | ✅ 暗色模式+专注模式+打字机 | ✅ 大纲跳转正文 | ✅ OutlineEditor 优化 | ✅ 随机生成流程统一 | ✅ 后端 prompt 修复
+**P0 + P1 全部完成 ✅**
 
 **Tab 协作：** 每次会话启动时，第一个动作必须是 Read `SYNC.md`，了解锁定的文件、任务分工和并行规则。不读不准动手。
 
@@ -13,23 +12,26 @@
 - 商业化意向，GitHub 公开仓库。核心算法 Phase 2-3 抽私有仓库，目前骨架阶段全公开
 - 技术决策要解释 WHY（面试用）
 
-## 当前阶段：Phase 1 完成 → Phase 2 待启动
+## 当前阶段：Phase 1 + P1 全部完成 → Phase 2 待启动
 
 **Phase 1 已完成：**
-- 后端 10 张表链路：Entity → Repository → Service → Controller
-- 前端 Vue 3 单页：书列表、创建书、书详情、角色管理、大纲编排、世界观设定
-- 全部 CRUD（创建/读取/编辑/删除）已实现并测试通过
+- 后端 11 张表链路：Entity → Repository → Service → Controller
+- 前端 Vue 3 单页：书列表、创建书、书详情、角色管理（含关系图）、大纲编排（含思维导图）、世界观设定、写作编辑器（含版本历史）、用户认证
+- 全部 CRUD + 认证登录（JWT + Spring Security）
+- SSE 流式 AI 续写 + Prompt 组装器 + 负向约束管理
 
-**Phase 2 待做：** 认证登录、AI 续写
+**P1 已全部完成：** RAG 世界观检索、负向约束面板、大纲思维导图、角色关系图、认证登录、版本历史归档
+
+**Phase 2 待做：** 编辑器体验深化、AI 续写优化
 
 ## 技术栈
 
-| 层 | 技术 | 版本 |
+| 层 | 技术 | 备注 |
 |------|------|------|
-| 前端 | Vue 3 + Vite + Vue Router + Pinia + Axios | Vue 3.5+ |
-| 后端 | Spring Boot + JPA/Hibernate（Phase 2 引入 MyBatis 做复杂查询） | 3.4.1 |
-| 数据库 | PostgreSQL | 16 |
-| 迁移 | Flyway | 10.22 |
+| 前端 | Vue 3 + Vite + Vue Router + Pinia + Axios | AI 辅助实现 |
+| 后端 | Spring Boot + MyBatis（用户主技） + JPA/Hibernate（AI 实现） | 3.4.1 |
+| 数据库 | PostgreSQL（AI 辅助） | 16 |
+| 迁移 | Flyway（AI 辅助） | 10.22 |
 | 构建 | Maven 多模块 | Java 17 |
 
 ## Maven 模块结构
@@ -109,8 +111,7 @@ bash backend/test_api.sh
 
 CLAUDE.md 保持精简。以下内容**只在相关操作时才读**：
 - **Git 提交/推送** → 先读 `.claude/git-guard.md`（保护清单 + 检查流程）
-- **启动 P1 新任务** → 读 `docs/plans/2026-05-22_竞品对比与优化方向.md`
-- **Tab 协作** → 读 `.claude/SYNC.md`
+- **Tab 协作** → 读 `SYNC.md`
 - **想法/灵感** → 读 `THOUGHTS.md`
 
 高频文件（每次会话必读）：本文件 + `~/.claude/CLAUDE.md`。其他按需。

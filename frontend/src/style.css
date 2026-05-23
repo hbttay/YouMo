@@ -21,6 +21,7 @@
   --border-color: #e5e7eb;
   --border-input: #ddd;
   --shadow-focus: rgba(91, 60, 196, 0.15);
+  --shadow-error: rgba(220, 38, 38, 0.15);
 }
 
 [data-theme="dark"] {
@@ -40,6 +41,7 @@
   --border-success-soft: #2a4030;
   --border-error-soft: #4a2020;
   --shadow-focus: rgba(139, 92, 246, 0.2);
+  --shadow-error: rgba(248, 113, 113, 0.2);
   --color-brand: #8b6ce6;
   --color-brand-hover: #a084ee;
   --color-danger: #f87171;
@@ -226,6 +228,14 @@ a:hover {
 .msg-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
 .msg-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
 
+/* ── Input error state ── */
+.form-group input.has-error,
+.form-group textarea.has-error,
+.form-group select.has-error {
+  border-color: var(--color-danger);
+  box-shadow: 0 0 0 2px var(--shadow-error, rgba(220, 38, 38, 0.15));
+}
+
 /* ── Loading ── */
 .loading {
   text-align: center;
@@ -243,3 +253,13 @@ a:hover {
 .msg-enter-from, .msg-leave-to { opacity: 0; transform: translateY(-8px); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Page transitions ── */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}

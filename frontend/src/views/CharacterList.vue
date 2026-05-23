@@ -7,6 +7,8 @@ import { useRequest } from '@/composables/useRequest'
 import { useDrafts } from '@/composables/useDrafts'
 import ModalConfirm from '@/components/ModalConfirm.vue'
 import RandomPreviewModal from '@/components/RandomPreviewModal.vue'
+import CharacterGraph from '@/components/CharacterGraph.vue'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
 const route = useRoute()
 const bookId = route.params.id
@@ -31,6 +33,7 @@ const form = ref({
   origin: '',
   identity: '',
   depth_level: 'L1',
+  relationships: [],
 })
 
 const { loading, error, execute: fetchExec } = useRequest(listCharacters)
@@ -44,10 +47,14 @@ const { add: addDraft } = useDrafts(bookId)
 const synopsis = ref('')
 const genStatus = ref({})
 const statusWarning = ref('')
+const bookTitle = ref('')
 
 async function loadSynopsis() {
   const res = await getBook(bookId)
-  if (res) synopsis.value = res.data?.core_idea || ''
+  if (res) {
+    synopsis.value = res.data?.core_idea || ''
+    bookTitle.value = res.data?.title || ''
+  }
 }
 
 async function checkStatus() {
@@ -174,6 +181,7 @@ function openCreate() {
 
 function openEdit(c) {
   slide.value = { open: true, id: c.id, title: '编辑角色' }
+  const rels = parseRelations(c.extra_attributes)
   form.value = {
     name: c.name || '',
     gender: c.gender || '',
@@ -182,11 +190,19 @@ function openEdit(c) {
     origin: c.origin || '',
     identity: c.identity || '',
     depth_level: c.depth_level || 'L1',
+    relationships: rels.length ? rels : [],
   }
 }
 
 function closeSlide() {
   slide.value = { open: false, id: null, title: '' }
+}
+
+function parseRelations(ea) {
+  try {
+    const obj = typeof ea === 'string' ? JSON.parse(ea) : (ea || {})
+    return obj.relationships || []
+  } catch { return [] }
 }
 
 function resetForm() {
@@ -198,6 +214,7 @@ function resetForm() {
     origin: '',
     identity: '',
     depth_level: 'L1',
+    relationships: [],
   }
 }
 
@@ -206,11 +223,30 @@ async function handleSlideSubmit() {
     error.value = '请输入角色名'
     return
   }
+  // Serialize relationships into extra_attributes
+  const payload = { ...form.value }
+  const rels = (form.value.relationships || []).filter(r => r.targetId)
+  if (rels.length > 0) {
+    // Merge with existing extra_attributes
+    let ea = {}
+    if (slide.value.id) {
+      const existing = characters.value.find(c => c.id === slide.value.id)
+      ea = typeof existing?.extra_attributes === 'string'
+        ? JSON.parse(existing.extra_attributes || '{}')
+        : (existing?.extra_attributes || {})
+    }
+    ea.relationships = rels
+    payload.extra_attributes = JSON.stringify(ea)
+  } else {
+    payload.extra_attributes = JSON.stringify({ relationships: [] })
+  }
+  delete payload.relationships
+
   let res
   if (slide.value.id) {
-    res = await updateExec(bookId, slide.value.id, { ...form.value })
+    res = await updateExec(bookId, slide.value.id, payload)
   } else {
-    res = await createExec(bookId, { ...form.value })
+    res = await createExec(bookId, payload)
   }
   if (res) {
     showToast()
@@ -234,7 +270,7 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
   <div class="characters-page">
     <!-- Page header -->
     <div class="page-header">
-      <router-link :to="`/books/${bookId}`" class="back-link">&larr; 返回详情</router-link>
+      <router-link :to="`/books/${bookId}`" class="back-link">&larr; {{ bookTitle || '返回详情' }}</router-link>
     </div>
 
     <!-- Section header -->
@@ -255,6 +291,13 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
             title="列表视图"
           >
             ☰
+          </button>
+          <button
+            :class="['toggle-btn', { active: viewMode === 'graph' }]"
+            @click="viewMode = 'graph'"
+            title="关系图"
+          >
+            ◉
           </button>
         </div>
         <button class="btn-random-outline" :disabled="randomGenerating" @click="handleRandomCharacter">
@@ -278,9 +321,11 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
     </transition>
 
     <!-- Loading -->
-    <div v-if="loading && characters.length === 0" class="state-box">
-      <div class="spinner"></div>
-      <p>加载中...</p>
+    <LoadingSpinner v-if="loading && characters.length === 0" />
+
+    <!-- Graph view -->
+    <div v-if="viewMode === 'graph' && characters.length > 0" class="graph-section">
+      <CharacterGraph :characters="characters" @select="(id) => { openEdit(characters.find(c => c.id === id)) }" />
     </div>
 
     <!-- Empty -->
@@ -293,7 +338,7 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
 
     <!-- Character cards -->
     <div
-      v-else
+      v-else-if="viewMode !== 'graph'"
       :class="['character-list', viewMode === 'grid' ? 'grid-view' : 'list-view']"
     >
       <div
@@ -402,6 +447,42 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
                 <label>外貌</label>
                 <textarea v-model="form.appearance" rows="3" placeholder="外貌特征描述"></textarea>
               </div>
+
+              <!-- ── Relationships ── -->
+              <div class="form-group">
+                <label>角色关系</label>
+                <div class="rel-list">
+                  <div v-for="(rel, idx) in form.relationships" :key="idx" class="rel-row">
+                    <select v-model="rel.targetId" class="rel-target">
+                      <option :value="null" disabled>选择角色</option>
+                      <option
+                        v-for="c in characters.filter(x => slide.id === null || x.id !== slide.id)"
+                        :key="c.id"
+                        :value="c.id"
+                      >{{ c.name }}</option>
+                    </select>
+                    <select v-model="rel.type" class="rel-type">
+                      <option value="">关系</option>
+                      <option value="挚友">挚友</option>
+                      <option value="朋友">朋友</option>
+                      <option value="恋人">恋人</option>
+                      <option value="夫妻">夫妻</option>
+                      <option value="亲人">亲人</option>
+                      <option value="师徒">师徒</option>
+                      <option value="仇敌">仇敌</option>
+                      <option value="对手">对手</option>
+                      <option value="同门">同门</option>
+                      <option value="陌生">陌生</option>
+                      <option value="其他">其他</option>
+                    </select>
+                    <button type="button" class="rel-remove" @click="form.relationships.splice(idx, 1)">&times;</button>
+                  </div>
+                </div>
+                <button type="button" class="rel-add" @click="form.relationships.push({ targetId: null, type: '', description: '' })">
+                  + 添加关系
+                </button>
+              </div>
+
               <div class="slide-footer">
                 <button type="submit" class="btn-primary" :disabled="loading">
                   {{ slide.id ? '保存修改' : '创建角色' }}
@@ -854,5 +935,81 @@ textarea { resize: vertical; }
   .section-header { flex-direction: column; align-items: flex-start; gap: 12px; }
   .two-cols { flex-direction: column; gap: 0; }
   .slide-panel { width: 100vw; }
+}
+
+/* ── Graph section ── */
+.graph-section {
+  margin-bottom: 24px;
+}
+
+/* ── Relationship edit ── */
+.rel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.rel-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rel-target {
+  flex: 2;
+  padding: 7px 10px;
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+.rel-type {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+.rel-remove {
+  background: none;
+  border: none;
+  color: #ef4444;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: background 0.12s;
+  font-family: inherit;
+}
+
+.rel-remove:hover {
+  background: #fef2f2;
+}
+
+.rel-add {
+  padding: 6px 14px;
+  background: var(--bg-surface);
+  color: var(--color-brand);
+  border: 1px dashed var(--color-brand);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+
+.rel-add:hover {
+  background: #f5f3ff;
+  border-style: solid;
 }
 </style>

@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { getChapterContent, saveChapterContent, getOutline, getVersionHistory } from '@/api/book'
 import { streamContinue, streamRewrite } from '@/api/generation'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
 const route = useRoute()
 const bookId = route.params.bookId
@@ -465,7 +466,7 @@ onBeforeRouteLeave((_to, _from, next) => {
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="loading">加载中...</div>
+    <LoadingSpinner v-if="loading" />
 
     <!-- Single textarea (SCENE or CHAPTER without children) -->
     <div v-else-if="scenes.length === 0" class="editor-area">

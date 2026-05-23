@@ -33,7 +33,11 @@ function handleLogout() {
       </nav>
     </header>
     <main class="app-main">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <Transition name="fade" mode="out-in">
+          <component :is="Component" />
+        </Transition>
+      </router-view>
     </main>
   </div>
 </template>
@@ -113,5 +117,24 @@ function handleLogout() {
 
 .btn-link:hover {
   color: var(--color-brand-hover);
+}
+
+@media (max-width: 640px) {
+  .app-header {
+    padding: 12px 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+  .logo {
+    font-size: 17px;
+  }
+  .app-main {
+    padding: 16px;
+  }
+  .user-email {
+    font-size: 12px;
+    margin-right: 8px;
+  }
 }
 </style>
