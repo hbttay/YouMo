@@ -1,0 +1,858 @@
+<script setup>
+import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import { listCharacters, createCharacter, updateCharacter, deleteCharacter, getBook } from '@/api/book'
+import { randomCharacter, getGenerationStatus } from '@/api/generation'
+import { useRequest } from '@/composables/useRequest'
+import { useDrafts } from '@/composables/useDrafts'
+import ModalConfirm from '@/components/ModalConfirm.vue'
+import RandomPreviewModal from '@/components/RandomPreviewModal.vue'
+
+const route = useRoute()
+const bookId = route.params.id
+
+const characters = ref([])
+const expandedId = ref(null)
+const viewMode = ref('grid')
+const successMsg = ref('')
+
+// Slide-over edit panel — single instance, one at a time
+const slide = ref({
+  open: false,
+  id: null,       // null = creating new, number = editing existing
+  title: '',      // "新建角色" or "编辑角色"
+})
+
+const form = ref({
+  name: '',
+  gender: '',
+  age_description: '',
+  appearance: '',
+  origin: '',
+  identity: '',
+  depth_level: 'L1',
+})
+
+const { loading, error, execute: fetchExec } = useRequest(listCharacters)
+const { execute: createExec } = useRequest(createCharacter)
+const { execute: updateExec } = useRequest(updateCharacter)
+const { execute: deleteExec } = useRequest(deleteCharacter)
+
+const randomGenerating = ref(false)
+const preview = ref({ show: false, type: 'character', data: null })
+const { add: addDraft } = useDrafts(bookId)
+const synopsis = ref('')
+const genStatus = ref({})
+const statusWarning = ref('')
+
+async function loadSynopsis() {
+  const res = await getBook(bookId)
+  if (res) synopsis.value = res.data?.core_idea || ''
+}
+
+async function checkStatus() {
+  try {
+    const s = await getGenerationStatus(bookId)
+    genStatus.value = s
+    if (!s.world_setting) statusWarning.value = '建议先生成「世界观设定」和「大纲」，再生成角色。'
+    else if (!s.outline) statusWarning.value = '建议先生成「大纲」，再生成角色。'
+    else statusWarning.value = ''
+  } catch { /* ignore */ }
+}
+
+async function handleRandomCharacter() {
+  if (!synopsis.value.trim()) {
+    error.value = '请先在「大纲编排」页填写总纲（全书概要），再生成角色'
+    return
+  }
+  randomGenerating.value = true
+  error.value = ''
+  try {
+    const data = await randomCharacter(bookId, synopsis.value.trim())
+    preview.value = { show: true, type: 'character', data }
+  } catch (e) {
+    error.value = e.message || '生成失败'
+  } finally {
+    randomGenerating.value = false
+  }
+}
+
+function applyCharacter() {
+  const d = preview.value.data
+  if (d) {
+    slide.value = { open: true, id: null, title: '新建角色（随机生成）' }
+    form.value = {
+      name: d.name || '',
+      gender: d.gender || '',
+      age_description: d.age_description || '',
+      appearance: d.appearance || '',
+      origin: d.origin || '',
+      identity: d.identity || '',
+      depth_level: d.depth_level || 'L1',
+    }
+  }
+  preview.value = { show: false, type: 'character', data: null }
+}
+
+function draftCharacter() {
+  addDraft('character', preview.value.data, preview.value.data?.name || '未命名角色')
+  preview.value = { show: false, type: 'character', data: null }
+}
+
+function closeCharacterPreview() {
+  preview.value = { show: false, type: 'character', data: null }
+}
+
+const confirmModal = ref({
+  visible: false,
+  title: '',
+  message: '',
+  resolve: null,
+})
+
+const depthLabels = {
+  L0: '背景板',
+  L1: '配角',
+  L2: '重要配角',
+  L3: '主角',
+}
+
+const avatarColors = [
+  '#E8D5F5', '#D5E8F5', '#D5F5E8', '#F5ECD5',
+  '#F5D5E8', '#D5F5F5', '#F5F5D5', '#E8E8E8',
+]
+
+function getAvatarColor(name) {
+  if (!name) return avatarColors[0]
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return avatarColors[Math.abs(hash) % avatarColors.length]
+}
+
+function showConfirm(title, message) {
+  return new Promise((resolve) => {
+    confirmModal.value = { visible: true, title, message, resolve }
+  })
+}
+
+function onConfirmModalConfirm() {
+  if (confirmModal.value.resolve) confirmModal.value.resolve(true)
+  confirmModal.value.visible = false
+}
+
+function onConfirmModalCancel() {
+  if (confirmModal.value.resolve) confirmModal.value.resolve(false)
+  confirmModal.value.visible = false
+}
+
+function showToast() {
+  successMsg.value = '保存成功'
+  setTimeout(() => { successMsg.value = '' }, 2000)
+}
+
+async function fetchCharacters() {
+  const res = await fetchExec(bookId)
+  if (res) characters.value = res.data || []
+}
+
+// ── Card expansion ──────────────────────────────
+function toggleExpand(id) {
+  expandedId.value = expandedId.value === id ? null : id
+}
+
+function isExpanded(id) {
+  return expandedId.value === id
+}
+
+// ── Slide-over panel ────────────────────────────
+function openCreate() {
+  slide.value = { open: true, id: null, title: '新建角色' }
+  resetForm()
+}
+
+function openEdit(c) {
+  slide.value = { open: true, id: c.id, title: '编辑角色' }
+  form.value = {
+    name: c.name || '',
+    gender: c.gender || '',
+    age_description: c.age_description || '',
+    appearance: c.appearance || '',
+    origin: c.origin || '',
+    identity: c.identity || '',
+    depth_level: c.depth_level || 'L1',
+  }
+}
+
+function closeSlide() {
+  slide.value = { open: false, id: null, title: '' }
+}
+
+function resetForm() {
+  form.value = {
+    name: '',
+    gender: '',
+    age_description: '',
+    appearance: '',
+    origin: '',
+    identity: '',
+    depth_level: 'L1',
+  }
+}
+
+async function handleSlideSubmit() {
+  if (!form.value.name.trim()) {
+    error.value = '请输入角色名'
+    return
+  }
+  let res
+  if (slide.value.id) {
+    res = await updateExec(bookId, slide.value.id, { ...form.value })
+  } else {
+    res = await createExec(bookId, { ...form.value })
+  }
+  if (res) {
+    showToast()
+    closeSlide()
+    await fetchCharacters()
+  }
+}
+
+async function handleDelete(id, name) {
+  const confirmed = await showConfirm('确认删除', `确定删除角色「${name}」？此操作不可恢复。`)
+  if (!confirmed) return
+  await deleteExec(bookId, id)
+  expandedId.value = null
+  await fetchCharacters()
+}
+
+onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
+</script>
+
+<template>
+  <div class="characters-page">
+    <!-- Page header -->
+    <div class="page-header">
+      <router-link :to="`/books/${bookId}`" class="back-link">&larr; 返回详情</router-link>
+    </div>
+
+    <!-- Section header -->
+    <div class="section-header">
+      <h1>角色管理</h1>
+      <div class="header-actions">
+        <div class="view-toggle">
+          <button
+            :class="['toggle-btn', { active: viewMode === 'grid' }]"
+            @click="viewMode = 'grid'"
+            title="网格视图"
+          >
+            ▦
+          </button>
+          <button
+            :class="['toggle-btn', { active: viewMode === 'list' }]"
+            @click="viewMode = 'list'"
+            title="列表视图"
+          >
+            ☰
+          </button>
+        </div>
+        <button class="btn-random-outline" :disabled="randomGenerating" @click="handleRandomCharacter">
+          {{ randomGenerating ? '生成中...' : '随机角色' }}
+        </button>
+        <button class="btn-primary" @click="openCreate">+ 新建角色</button>
+      </div>
+    </div>
+
+    <!-- Toast: success -->
+    <transition name="toast-fade">
+      <div v-if="successMsg" class="toast toast-success">{{ successMsg }}</div>
+    </transition>
+
+    <!-- Order warning -->
+    <div v-if="statusWarning" class="toast toast-warning">{{ statusWarning }}</div>
+
+    <!-- Toast: error -->
+    <transition name="toast-fade">
+      <div v-if="error" class="toast toast-error">{{ error }}</div>
+    </transition>
+
+    <!-- Loading -->
+    <div v-if="loading && characters.length === 0" class="state-box">
+      <div class="spinner"></div>
+      <p>加载中...</p>
+    </div>
+
+    <!-- Empty -->
+    <div v-else-if="characters.length === 0" class="state-box empty-state">
+      <div class="empty-icon">📖</div>
+      <h3>还没有角色</h3>
+      <p>为你的故事添加第一个角色吧</p>
+      <button class="btn-primary" @click="openCreate">创建第一个角色</button>
+    </div>
+
+    <!-- Character cards -->
+    <div
+      v-else
+      :class="['character-list', viewMode === 'grid' ? 'grid-view' : 'list-view']"
+    >
+      <div
+        v-for="c in characters"
+        :key="c.id"
+        :class="['character-card', { 'is-expanded': isExpanded(c.id) }]"
+        @click="toggleExpand(c.id)"
+      >
+        <!-- Card top row (always visible) -->
+        <div class="card-top">
+          <div class="avatar-circle" :style="{ backgroundColor: getAvatarColor(c.name) }">
+            <span class="avatar-text">{{ c.name?.charAt(0)?.toUpperCase() || '?' }}</span>
+          </div>
+          <div class="card-title-area">
+            <span class="char-name">{{ c.name }}</span>
+            <span :class="['depth-badge', 'depth-' + (c.depth_level || 'L1')]">
+              {{ depthLabels[c.depth_level] || c.depth_level }}
+            </span>
+          </div>
+          <span class="expand-arrow">{{ isExpanded(c.id) ? '▾' : '▸' }}</span>
+        </div>
+
+        <!-- Summary meta (always visible) -->
+        <div class="card-meta">
+          <span v-if="c.gender" class="meta-item">{{ c.gender }}</span>
+          <span v-if="c.gender && c.identity" class="meta-sep">|</span>
+          <span v-if="c.identity" class="meta-item">{{ c.identity }}</span>
+        </div>
+
+        <!-- Expanded detail (only visible when expanded) -->
+        <div v-if="isExpanded(c.id)" class="card-detail" @click.stop>
+          <div v-if="c.age_description" class="detail-row">
+            <span class="detail-label">年龄段</span>
+            <span class="detail-value">{{ c.age_description }}</span>
+          </div>
+          <div v-if="c.identity" class="detail-row">
+            <span class="detail-label">身份</span>
+            <span class="detail-value">{{ c.identity }}</span>
+          </div>
+          <div v-if="c.origin" class="detail-row">
+            <span class="detail-label">出身</span>
+            <span class="detail-value">{{ c.origin }}</span>
+          </div>
+          <div v-if="c.appearance" class="detail-row">
+            <span class="detail-label">外貌</span>
+            <span class="detail-value">{{ c.appearance }}</span>
+          </div>
+
+          <div class="card-actions">
+            <button class="btn-outline" @click.stop="openEdit(c)">编辑</button>
+            <button class="btn-outline btn-outline-danger" @click.stop="handleDelete(c.id, c.name)">删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════
+         Slide-over Edit Panel
+         ═══════════════════════════════════════ -->
+    <Teleport to="body">
+      <transition name="slide">
+        <div v-if="slide.open" class="slide-overlay" @click.self="closeSlide">
+          <div class="slide-panel">
+            <div class="slide-header">
+              <h2>{{ slide.title }}</h2>
+              <button class="slide-close" @click="closeSlide">&times;</button>
+            </div>
+            <form class="slide-body" @submit.prevent="handleSlideSubmit">
+              <div class="form-group">
+                <label>角色名 <span class="required">*</span></label>
+                <input v-model="form.name" placeholder="角色名" maxlength="100" />
+              </div>
+              <div class="form-row two-cols">
+                <div class="form-group">
+                  <label>性别</label>
+                  <select v-model="form.gender">
+                    <option value="">不限</option>
+                    <option value="男">男</option>
+                    <option value="女">女</option>
+                    <option value="其他">其他</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>深度等级</label>
+                  <select v-model="form.depth_level">
+                    <option value="L0">L0 - 背景板</option>
+                    <option value="L1">L1 - 配角</option>
+                    <option value="L2">L2 - 重要配角</option>
+                    <option value="L3">L3 - 主角</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>年龄段描述</label>
+                <input v-model="form.age_description" placeholder="如：二十五岁、中年、少年" />
+              </div>
+              <div class="form-group">
+                <label>身份</label>
+                <input v-model="form.identity" placeholder="如：剑客、魔法学院学生" />
+              </div>
+              <div class="form-group">
+                <label>出身背景</label>
+                <textarea v-model="form.origin" rows="3" placeholder="出身、成长环境"></textarea>
+              </div>
+              <div class="form-group">
+                <label>外貌</label>
+                <textarea v-model="form.appearance" rows="3" placeholder="外貌特征描述"></textarea>
+              </div>
+              <div class="slide-footer">
+                <button type="submit" class="btn-primary" :disabled="loading">
+                  {{ slide.id ? '保存修改' : '创建角色' }}
+                </button>
+                <button type="button" class="btn-cancel" @click="closeSlide">取消</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
+
+    <!-- Delete confirm -->
+    <ModalConfirm
+      :visible="confirmModal.visible"
+      :title="confirmModal.title"
+      :message="confirmModal.message"
+      danger
+      @confirm="onConfirmModalConfirm"
+      @cancel="onConfirmModalCancel"
+    />
+
+    <RandomPreviewModal
+      :visible="preview.show"
+      type="character"
+      :data="preview.data"
+      :loading="false"
+      @apply="applyCharacter"
+      @draft="draftCharacter"
+      @close="closeCharacterPreview"
+    />
+  </div>
+</template>
+
+<style scoped>
+.characters-page {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* ── Page header ── */
+.page-header {
+  margin-bottom: 20px;
+}
+.back-link {
+  color: #5b3cc4;
+  text-decoration: none;
+  font-size: 14px;
+  transition: color 0.2s;
+}
+.back-link:hover {
+  color: #4a2fa8;
+}
+
+/* ── Section header ── */
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+.section-header h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── View toggle ── */
+.view-toggle {
+  display: flex;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.toggle-btn {
+  padding: 6px 12px;
+  border: none;
+  background: var(--bg-surface);
+  color: #888;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: all 0.2s;
+}
+.toggle-btn.active {
+  background: #f0e6ff;
+  color: #7c3aed;
+}
+.toggle-btn:not(.active):hover {
+  background: #f5f5f5;
+}
+
+/* ── Toast ── */
+.toast {
+  padding: 10px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.toast-success { background: var(--bg-success-soft); color: var(--color-success); border: 1px solid var(--border-success-soft); }
+.toast-error { background: var(--bg-error-soft); color: var(--color-danger); border: 1px solid var(--border-error-soft); }
+.toast-warning { background: #fefce8; color: #854d0e; border: 1px solid #fde68a; }
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* ── Character list ── */
+.character-list {
+  display: grid;
+  gap: 16px;
+}
+.grid-view {
+  grid-template-columns: 1fr 1fr;
+}
+.list-view {
+  grid-template-columns: 1fr;
+}
+
+/* ── Character card ── */
+.character-card {
+  background: var(--bg-surface);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--border-color);
+  padding: 20px;
+  cursor: pointer;
+  transition: box-shadow 0.2s, border-color 0.2s;
+  user-select: none;
+}
+.character-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+.character-card.is-expanded {
+  border-color: #d8c8f0;
+  box-shadow: 0 4px 16px rgba(124, 58, 237, 0.1);
+}
+
+/* ── Card top row ── */
+.card-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.avatar-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.avatar-text {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.card-title-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.char-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.expand-arrow {
+  font-size: 14px;
+  color: #aaa;
+  flex-shrink: 0;
+}
+
+/* ── Depth badge ── */
+.depth-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.depth-L0 { background: var(--bg-surface-hover); color: var(--text-secondary); }
+.depth-L1 { background: #e8f0fe; color: #1a56db; }
+.depth-L2 { background: #fef3e0; color: #b45309; }
+.depth-L3 { background: #f0e6ff; color: #7c3aed; }
+
+/* ── Card meta ── */
+.card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.meta-item { color: var(--text-secondary); }
+.meta-sep { color: var(--border-color); }
+
+/* ── Expanded detail ── */
+.card-detail {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color);
+  cursor: default;
+}
+.detail-row {
+  margin-bottom: 10px;
+}
+.detail-label {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #999;
+  width: 48px;
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+.detail-value {
+  font-size: 13px;
+  color: #444;
+  line-height: 1.6;
+}
+
+/* ── Card actions ── */
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #f5f5f5;
+}
+
+/* ── Buttons ── */
+.btn-primary {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 8px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-primary:hover { background: #6d28d9; }
+.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.btn-random-outline {
+  padding: 8px 18px;
+  border: 1px solid var(--color-brand);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--color-brand);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+.btn-random-outline:hover:not(:disabled) { background: #f5f3ff; }
+.btn-random-outline:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-cancel {
+  padding: 8px 20px;
+  border: 1px solid #d0d0d0;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: #555;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn-cancel:hover { background: #f5f5f5; }
+
+.btn-outline {
+  padding: 6px 16px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: #555;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-outline:hover {
+  border-color: #7c3aed;
+  color: #7c3aed;
+}
+.btn-outline-danger {
+  color: #e74c3c;
+  border-color: #e74c3c;
+}
+.btn-outline-danger:hover {
+  background: #fef2f2;
+}
+
+/* ── Form controls ── */
+.form-group {
+  margin-bottom: 16px;
+}
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #444;
+  margin-bottom: 6px;
+}
+.required { color: #e74c3c; }
+
+.form-row {
+  display: flex;
+  gap: 16px;
+}
+.two-cols > .form-group {
+  flex: 1;
+  min-width: 0;
+}
+
+input, select, textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+  font-family: inherit;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #7c3aed;
+}
+textarea { resize: vertical; }
+
+/* ── Slide-over panel ── */
+.slide-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+}
+.slide-panel {
+  width: 420px;
+  max-width: 100vw;
+  height: 100vh;
+  background: var(--bg-surface);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.slide-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.slide-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.slide-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #888;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+.slide-close:hover { color: var(--text-primary); }
+.slide-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+.slide-footer {
+  display: flex;
+  gap: 10px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-color);
+  margin-top: 20px;
+}
+
+/* Slide transition */
+.slide-enter-active,
+.slide-leave-active {
+  transition: opacity 0.25s ease;
+}
+.slide-enter-active .slide-panel,
+.slide-leave-active .slide-panel {
+  transition: transform 0.25s ease;
+}
+.slide-enter-from,
+.slide-leave-to {
+  opacity: 0;
+}
+.slide-enter-from .slide-panel {
+  transform: translateX(100%);
+}
+.slide-leave-to .slide-panel {
+  transform: translateX(100%);
+}
+
+/* ── State boxes ── */
+.state-box {
+  text-align: center;
+  padding: 80px 20px;
+  color: #888;
+  font-size: 14px;
+}
+.empty-icon { font-size: 64px; margin-bottom: 16px; }
+.state-box h3 { margin: 0 0 8px; font-size: 20px; color: var(--text-primary); }
+.state-box p { margin: 0 0 24px; }
+.spinner {
+  width: 32px; height: 32px;
+  border: 3px solid #e0e0e0;
+  border-top-color: #7c3aed;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin: 0 auto 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+  .grid-view { grid-template-columns: 1fr; }
+  .section-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .two-cols { flex-direction: column; gap: 0; }
+  .slide-panel { width: 100vw; }
+}
+</style>
