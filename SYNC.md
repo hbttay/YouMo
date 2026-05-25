@@ -62,3 +62,9 @@
 - **文档整理完成**：CLAUDE.md 更新（技术栈标注 MyBatis 用户主技 + JPA AI 实现）、进度确认清单重排、SYNC.md 标记全部完成
 - **产品体验打磨**：LoadingSpinner 组件（6 页统一）、子页导航显示书名、页面过渡动画、响应式布局、表单错误态 CSS 变量
 - **规划更新**：竞品对比文档更新评分（5.4→6.7）、THOUGHTS.md 收件箱迁移、Phase 2 具体任务规划
+
+### 2026-05-24 (续2)
+- **P1 RAG 完成**：ContextKeywordExtractor 分段关键词提取、PromptAssemblyService 相关性匹配 + token 预算控制、前端 AI 注入设置 UI（精简/标准/详细）
+- **草稿箱统一**：DraftsDrawer.vue 可复用组件，CharacterList/WorldSetting/OutlineEditor 三个页面均加入草稿箱入口
+- **Bug 修复**：CharacterList "应用"按钮（缺少 relationships: []）、端口 5173 冲突、V9 migration 补 BaseEntity 列
+- **环境配置**：application-local.yml（gitignored）存储本地密钥，Spring profiles 管理

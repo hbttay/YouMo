@@ -7,6 +7,7 @@ import { useRequest } from '@/composables/useRequest'
 import { useDrafts } from '@/composables/useDrafts'
 import RandomPreviewModal from '@/components/RandomPreviewModal.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import DraftsDrawer from '@/components/DraftsDrawer.vue'
 
 const route = useRoute()
 const bookId = route.params.id
@@ -118,6 +119,20 @@ function draftWorld() {
   preview.value = { show: false, type: 'world-setting', data: null }
 }
 
+function handleDraftApply(data) {
+  if (data.era) form.value.era = data.era
+  if (data.geography) form.value.geography = data.geography
+  if (data.history_events) form.value.history_events = data.history_events
+  if (data.politics) form.value.politics = data.politics
+  if (data.economy) form.value.economy = data.economy
+  if (data.culture) form.value.culture = data.culture
+  if (data.military) form.value.military = data.military
+  if (data.core_rule_type) form.value.core_rule_type = data.core_rule_type
+  if (data.core_rule_summary) form.value.core_rule_summary = data.core_rule_summary
+  success.value = '已导入草稿，可修改后保存'
+  setTimeout(() => { success.value = '' }, 3000)
+}
+
 function closeWorldPreview() {
   preview.value = { show: false, type: 'world-setting', data: null }
 }
@@ -161,6 +176,7 @@ onMounted(() => { fetchSetting(bookId); loadSynopsis() })
     <div class="section-header">
       <h1>世界观设定</h1>
       <div class="header-actions">
+        <DraftsDrawer :book-id="bookId" type="world-setting" @apply="handleDraftApply" />
         <button class="btn-random" :disabled="generating" @click="handleRandomWorld">
           {{ generating ? '生成中...' : '随机世界观' }}
         </button>

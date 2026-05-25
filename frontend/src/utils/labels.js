@@ -10,11 +10,19 @@ export const CREATION_LABEL = {
   DIVERGENT: '分支叙事',
 }
 
+const _CREATION_REVERSE = {}
+for (const [k, v] of Object.entries(CREATION_LABEL)) _CREATION_REVERSE[v] = k
+export const CREATION_KEY = _CREATION_REVERSE
+
 export const LENGTH_LABEL = {
   SHORT: '短篇',
   MEDIUM: '中篇',
   LONG: '长篇',
 }
+
+const _LENGTH_REVERSE = {}
+for (const [k, v] of Object.entries(LENGTH_LABEL)) _LENGTH_REVERSE[v] = k
+export const LENGTH_KEY = _LENGTH_REVERSE
 
 export const NODE_TYPE = {
   VOLUME: '卷',

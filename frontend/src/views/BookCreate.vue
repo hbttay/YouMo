@@ -5,7 +5,7 @@ import { createBook } from '@/api/book'
 import { randomBookIdea } from '@/api/generation'
 import { useDrafts } from '@/composables/useDrafts'
 import RandomPreviewModal from '@/components/RandomPreviewModal.vue'
-import { CREATION_LABEL, LENGTH_LABEL } from '@/utils/labels'
+import { CREATION_LABEL, LENGTH_LABEL, CREATION_KEY, LENGTH_KEY } from '@/utils/labels'
 
 const router = useRouter()
 const { add: addDraft } = useDrafts(null)
@@ -41,8 +41,8 @@ function applyPreview() {
   if (d) {
     if (d.title) form.title = d.title
     if (d.core_idea) form.core_idea = d.core_idea
-    if (d.creation_mode) form.creation_mode = d.creation_mode
-    if (d.target_length) form.target_length = d.target_length
+    if (d.creation_mode) form.creation_mode = CREATION_KEY[d.creation_mode] || d.creation_mode
+    if (d.target_length) form.target_length = LENGTH_KEY[d.target_length] || d.target_length
   }
   preview.value = { show: false, type: 'book-idea', data: null }
 }

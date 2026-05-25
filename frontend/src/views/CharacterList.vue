@@ -9,6 +9,7 @@ import ModalConfirm from '@/components/ModalConfirm.vue'
 import RandomPreviewModal from '@/components/RandomPreviewModal.vue'
 import CharacterGraph from '@/components/CharacterGraph.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import DraftsDrawer from '@/components/DraftsDrawer.vue'
 
 const route = useRoute()
 const bookId = route.params.id
@@ -96,6 +97,7 @@ function applyCharacter() {
       origin: d.origin || '',
       identity: d.identity || '',
       depth_level: d.depth_level || 'L1',
+      relationships: [],
     }
   }
   preview.value = { show: false, type: 'character', data: null }
@@ -104,6 +106,20 @@ function applyCharacter() {
 function draftCharacter() {
   addDraft('character', preview.value.data, preview.value.data?.name || '未命名角色')
   preview.value = { show: false, type: 'character', data: null }
+}
+
+function handleDraftApply(data) {
+  slide.value = { open: true, id: null, title: '新建角色（草稿导入）' }
+  form.value = {
+    name: data.name || '',
+    gender: data.gender || '',
+    age_description: data.age_description || '',
+    appearance: data.appearance || '',
+    origin: data.origin || '',
+    identity: data.identity || '',
+    depth_level: data.depth_level || 'L1',
+    relationships: [],
+  }
 }
 
 function closeCharacterPreview() {
@@ -277,6 +293,7 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
     <div class="section-header">
       <h1>角色管理</h1>
       <div class="header-actions">
+        <DraftsDrawer :book-id="bookId" type="character" @apply="handleDraftApply" />
         <div class="view-toggle">
           <button
             :class="['toggle-btn', { active: viewMode === 'grid' }]"

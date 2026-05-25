@@ -13,6 +13,7 @@
         <button v-if="tree.length > 0" class="btn btn-sm btn-outline" @click="viewMode = viewMode === 'list' ? 'mindmap' : 'list'">
           {{ viewMode === 'list' ? '思维导图' : '列表视图' }}
         </button>
+        <DraftsDrawer :book-id="bookId" type="outline" @apply="handleDraftApply" />
         <button class="btn btn-random" :disabled="outlineGenerating" @click="handleRandomOutline">
           {{ outlineGenerating ? '生成中...' : '随机大纲' }}
         </button>
@@ -388,6 +389,7 @@ import ModalConfirm from '@/components/ModalConfirm.vue'
 import RandomPreviewModal from '@/components/RandomPreviewModal.vue'
 import MindMapView from '@/components/MindMapView.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import DraftsDrawer from '@/components/DraftsDrawer.vue'
 import { NODE_TYPE, NODE_COLOR } from '@/utils/labels'
 
 const route = useRoute()
@@ -547,6 +549,11 @@ function draftOutline() {
   addDraft('outline', preview.value.data, '大纲 ' + new Date().toLocaleString())
   preview.value = { show: false, type: 'outline', data: null }
   showSuccess('已存入草稿箱')
+}
+
+function handleDraftApply(data) {
+  preview.value.data = data
+  applyOutline()
 }
 
 function closePreview() {
