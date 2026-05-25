@@ -1,11 +1,12 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { getChapterContent, saveChapterContent, getOutline, getVersionHistory } from '@/api/book'
 import { streamContinue, streamRewrite } from '@/api/generation'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
 const route = useRoute()
+const router = useRouter()
 const bookId = route.params.bookId
 const structureId = Number(route.params.structureId)
 const title = route.query.title || '未命名章节'
@@ -131,6 +132,9 @@ function handlePublish() {
 const generating = ref(false)
 const genError = ref('')
 const genTarget = ref(null) // 'chapter' | sceneId — which textarea is receiving output
+const consistencyIssues = ref([]) // consistency check results
+const temperature = ref(1.2) // AI temperature (0.3-2.0)
+let abortController = null
 
 function handleAiContinue(target) {
   genTarget.value = target
@@ -153,8 +157,9 @@ function handleAiContinue(target) {
   }
 
   generating.value = true
+  abortController = new AbortController()
   streamContinue(
-    { bookId: bookId, context: ctx },
+    { bookId: bookId, context: ctx, temperature: temperature.value, signal: abortController.signal },
     {
       onChunk(chunk) {
         if (target === 'chapter') {
@@ -171,8 +176,16 @@ function handleAiContinue(target) {
         genTarget.value = null
         doSave('DRAFT')
       },
+      onConsistency(result) {
+        consistencyIssues.value = result?.issues || []
+      },
       onError(msg) {
-        genError.value = msg
+        if (msg === 'AbortError') {
+          // user-initiated stop, don't show error
+          consistencyIssues.value = []
+        } else {
+          genError.value = msg
+        }
         generating.value = false
         genTarget.value = null
       },
@@ -181,8 +194,10 @@ function handleAiContinue(target) {
 }
 
 function handleAiStop() {
-  // reload page to abort — simple but effective
-  window.location.reload()
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+  }
 }
 
 // ── AI 改写 ─────────────────────────
@@ -330,34 +345,82 @@ function formatTime(dateStr) {
   })
 }
 
+// ── Chapter navigation ──
+const navNodes = ref([]) // [{ id, title, node_type }] — flat ordered list of writable nodes
+
+function buildNavList(outlineData) {
+  const map = {}
+  const roots = []
+  for (const n of outlineData) {
+    map[n.id] = { ...n, children: [] }
+  }
+  for (const n of outlineData) {
+    if (n.parent_id && map[n.parent_id]) {
+      map[n.parent_id].children.push(map[n.id])
+    } else {
+      roots.push(map[n.id])
+    }
+  }
+  // Sort by sequence
+  const sort = arr => { arr.sort((a, b) => a.sequence - b.sequence); arr.forEach(n => n.children && sort(n.children)) }
+  sort(roots)
+
+  // Flatten to writable nodes only (CHAPTER, SCENE), depth-first
+  const result = []
+  const walk = node => {
+    if (node.node_type === 'CHAPTER' || node.node_type === 'SCENE') {
+      result.push({ id: node.id, title: node.title, node_type: node.node_type })
+    }
+    if (node.children) node.children.forEach(walk)
+  }
+  roots.forEach(walk)
+  return result
+}
+
+const navIndex = computed(() => navNodes.value.findIndex(n => n.id === structureId))
+const prevNode = computed(() => navIndex.value > 0 ? navNodes.value[navIndex.value - 1] : null)
+const nextNode = computed(() => navIndex.value < navNodes.value.length - 1 ? navNodes.value[navIndex.value + 1] : null)
+
+function navigateTo(node) {
+  let url = `/books/${bookId}/write/${node.id}?title=${encodeURIComponent(node.title)}&node_type=${node.node_type}`
+  router.push(url)
+}
+
 // ── Load ──
 
 async function loadContent() {
   loading.value = true
   try {
-    if (nodeType === 'CHAPTER') {
+    // Load outline for nav + scene discovery
+    let outlineData = []
+    try {
       const outlineRes = await getOutline(bookId)
       if (outlineRes && outlineRes.data) {
-        scenes.value = (outlineRes.data || [])
-          .filter(n => n.parent_id === structureId && n.node_type === 'SCENE')
-          .sort((a, b) => a.sequence - b.sequence)
-          .map(n => ({
-            id: n.id,
-            title: n.title,
-            sequence: n.sequence,
-            content: '',
-            status: 'DRAFT',
-          }))
-        for (const sc of scenes.value) {
-          try {
-            const res = await getChapterContent(sc.id)
-            if (res && res.data) {
-              sc.content = res.data.content || ''
-              sc.status = res.data.status || 'DRAFT'
-              if (sc.content) expandedScenes.add(sc.id)
-            }
-          } catch (e) { /* 新场景 */ }
-        }
+        outlineData = outlineRes.data
+        navNodes.value = buildNavList(outlineData)
+      }
+    } catch (e) { /* outline load failed */ }
+
+    if (nodeType === 'CHAPTER') {
+      scenes.value = outlineData
+        .filter(n => n.parent_id === structureId && n.node_type === 'SCENE')
+        .sort((a, b) => a.sequence - b.sequence)
+        .map(n => ({
+          id: n.id,
+          title: n.title,
+          sequence: n.sequence,
+          content: '',
+          status: 'DRAFT',
+        }))
+      for (const sc of scenes.value) {
+        try {
+          const res = await getChapterContent(sc.id)
+          if (res && res.data) {
+            sc.content = res.data.content || ''
+            sc.status = res.data.status || 'DRAFT'
+            if (sc.content) expandedScenes.add(sc.id)
+          }
+        } catch (e) { /* 新场景 */ }
       }
       try {
         const res = await getChapterContent(structureId)
@@ -392,16 +455,28 @@ function startAutoSave() {
   }, 30000)
 }
 
+function onKeyNav(e) {
+  if (e.ctrlKey && e.key === 'ArrowLeft') {
+    e.preventDefault()
+    if (prevNode.value) navigateTo(prevNode.value)
+  } else if (e.ctrlKey && e.key === 'ArrowRight') {
+    e.preventDefault()
+    if (nextNode.value) navigateTo(nextNode.value)
+  }
+}
+
 onMounted(() => {
   loadContent()
   startAutoSave()
   document.addEventListener('keydown', exitFocus)
+  document.addEventListener('keydown', onKeyNav)
 })
 
 onUnmounted(() => {
   if (saveTimer) clearInterval(saveTimer)
   if (savedTimer) clearTimeout(savedTimer)
   document.removeEventListener('keydown', exitFocus)
+  document.removeEventListener('keydown', onKeyNav)
 })
 
 import { onBeforeRouteLeave } from 'vue-router'
@@ -424,6 +499,11 @@ onBeforeRouteLeave((_to, _from, next) => {
     <div class="write-header" v-show="!focusMode">
       <div class="header-left">
         <router-link :to="`/books/${bookId}/outline`" class="back-link">&larr; 返回大纲</router-link>
+        <div class="nav-btns">
+          <button class="nav-btn" :disabled="!prevNode" :title="prevNode ? '上一章 Ctrl+←' : ''" @click="navigateTo(prevNode)">◂</button>
+          <span class="nav-info" v-if="navNodes.length">{{ navIndex + 1 }}/{{ navNodes.length }}</span>
+          <button class="nav-btn" :disabled="!nextNode" :title="nextNode ? '下一章 Ctrl+→' : ''" @click="navigateTo(nextNode)">▸</button>
+        </div>
         <h1 class="chapter-title">{{ title }}</h1>
         <span v-if="nodeType === 'CHAPTER'" class="type-label">章</span>
         <span v-else class="type-label scene">节</span>
@@ -438,6 +518,10 @@ onBeforeRouteLeave((_to, _from, next) => {
         </span>
         <span v-if="saved" class="saved-indicator">已保存 {{ lastSaved }}</span>
         <template v-if="!generating && !rewriting">
+          <div class="temp-slider" title="创意度">
+            <span class="temp-label">🔥 {{ temperature }}</span>
+            <input type="range" min="0.3" max="2.0" step="0.1" v-model.number="temperature" />
+          </div>
           <select v-model="rewriteMode" class="rewrite-select">
             <option v-for="m in modeOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
           </select>
@@ -459,6 +543,17 @@ onBeforeRouteLeave((_to, _from, next) => {
     <div v-if="genError" class="gen-error">{{ genError }}</div>
     <div v-if="generating" class="gen-status">AI 正在续写<span class="gen-dots">...</span></div>
     <div v-if="rewriting" class="gen-status">AI 正在{{ modeOptions.find(m => m.value === rewriteMode)?.label }}<span class="gen-dots">...</span></div>
+
+    <!-- Consistency warnings -->
+    <div v-if="consistencyIssues.length" class="consistency-card">
+      <div class="consistency-title">一致性提醒</div>
+      <div v-for="(issue, i) in consistencyIssues" :key="i" class="consistency-item"
+        :class="issue.severity === 'high' ? 'severity-high' : 'severity-medium'">
+        <span class="consistency-entity">{{ issue.entity }}</span>
+        <span class="consistency-desc">{{ issue.description }}</span>
+      </div>
+    </div>
+
     <div v-if="rewriteTarget !== null && !rewriting && !generating" class="rewrite-actions">
       <span class="rewrite-hint">改写完成，要保留吗？</span>
       <button class="btn-apply" @click="handleRewriteApply">应用改写</button>
@@ -633,6 +728,17 @@ onBeforeRouteLeave((_to, _from, next) => {
   flex-direction: column;
   gap: 6px;
 }
+.nav-btns { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+.nav-btn {
+  padding: 2px 8px; font-size: 14px; font-family: inherit;
+  background: var(--bg-surface); color: var(--color-brand);
+  border: 1px solid var(--border-color); border-radius: 4px;
+  cursor: pointer; transition: all 0.15s;
+}
+.nav-btn:hover:not(:disabled) { background: #f5f3ff; border-color: var(--color-brand); }
+.nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.nav-info { font-size: 11px; color: var(--text-muted); min-width: 36px; text-align: center; }
+
 .chapter-title {
   font-size: 22px;
   font-weight: 700;
@@ -753,6 +859,23 @@ onBeforeRouteLeave((_to, _from, next) => {
   75% { content: '...'; }
 }
 
+/* ── Consistency ── */
+.consistency-card {
+  margin-bottom: 12px; padding: 12px 16px;
+  background: #fffbeb; border: 1px solid #fde68a;
+  border-radius: 8px;
+}
+.consistency-title { font-size: 13px; font-weight: 600; color: #92400e; margin-bottom: 8px; }
+.consistency-item { display: flex; gap: 8px; padding: 6px 0; border-bottom: 1px solid #fef3c7; font-size: 13px; }
+.consistency-item:last-child { border-bottom: none; }
+.consistency-entity {
+  font-weight: 600; color: #b45309; flex-shrink: 0;
+  padding: 1px 8px; background: #fef3c7; border-radius: 4px;
+}
+.severity-high .consistency-entity { background: #fee2e2; color: #dc2626; }
+.severity-medium .consistency-entity { background: #fef3c7; color: #b45309; }
+.consistency-desc { color: #78350f; line-height: 1.5; }
+
 /* ── Rewrite ── */
 .rewrite-select {
   padding: 7px 10px; font-size: 13px;
@@ -766,6 +889,16 @@ onBeforeRouteLeave((_to, _from, next) => {
   background: var(--bg-surface); color: var(--text-primary);
   font-family: inherit; cursor: pointer;
 }
+.temp-slider {
+  display: flex; align-items: center; gap: 4px;
+}
+.temp-slider input[type="range"] {
+  width: 60px; height: 4px;
+  accent-color: #5b3cc4;
+  cursor: pointer;
+}
+.temp-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; min-width: 36px; }
+
 .btn-rewrite {
   padding: 8px 22px;
   background: var(--bg-surface); color: #7c3aed;

@@ -1,7 +1,7 @@
 /**
  * Shared SSE stream reader — parses text/event-stream response.
  */
-async function readSSE(resp, { onChunk, onDone, onError }) {
+async function readSSE(resp, { onChunk, onDone, onError, onConsistency }) {
   const reader = resp.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
@@ -32,6 +32,10 @@ async function readSSE(resp, { onChunk, onDone, onError }) {
           onDone?.()
           return
         }
+        if (lastEvent === 'consistency') {
+          try { onConsistency?.(JSON.parse(data)) } catch { onConsistency?.(data) }
+          continue
+        }
         if (lastEvent === 'chunk' || !lastEvent) {
           onChunk?.(data)
         }
@@ -52,11 +56,12 @@ function authHeaders() {
 /**
  * AI 续写 — SSE streaming
  */
-export async function streamContinue({ bookId, context, instructions, temperature, topP, frequencyPenalty, presencePenalty, maxTokens }, callbacks) {
+export async function streamContinue({ bookId, context, instructions, temperature, topP, frequencyPenalty, presencePenalty, maxTokens, signal }, callbacks) {
   try {
     const resp = await fetch('/api/generation/continue', {
       method: 'POST',
       headers: authHeaders(),
+      signal,
       body: JSON.stringify({
         book_id: bookId,
         context,
@@ -76,7 +81,7 @@ export async function streamContinue({ bookId, context, instructions, temperatur
     }
     await readSSE(resp, callbacks)
   } catch (e) {
-    callbacks.onError?.(e.message || '网络错误')
+    callbacks.onError?.(e.name === 'AbortError' ? 'AbortError' : (e.message || '网络错误'))
   }
 }
 

@@ -39,7 +39,6 @@ public class GenerationController {
     private final PromptConfig promptConfig;
 
     // ── Fallback prompts (used when youmo-prompts/ directory is absent) ──
-    // The tuned versions live in youmo-prompts/*.txt (not in public repo).
 
     private static final String FALLBACK_CONTINUE = """
         你是一个专业的小说续写助手。根据提供的上下文续写下一段内容。
@@ -62,6 +61,22 @@ public class GenerationController {
         篇幅约为原文一半。只输出缩写后的全文。
         """;
 
+    private static final String CONSISTENCY_PROMPT = """
+        你是一个小说一致性检查器。分析生成的新内容与原有前文之间是否存在矛盾。
+
+        请检查以下方面：
+        1. 角色：姓名、身份、关系是否与前文一致
+        2. 地点：场景位置是否与前文连贯
+        3. 物品/设定：关键物品或设定的描述是否前后矛盾
+
+        只报告确实存在的矛盾，不报告合理的剧情发展。
+        如果无矛盾，返回 {"issues":[]}
+
+        返回JSON格式：
+        {"issues":[{"entity":"实体名","description":"矛盾描述","severity":"high|medium"}]}
+        只返回JSON，不输出其他内容。
+        """;
+
     public GenerationController(PromptAssemblyService promptAssemblyService,
                                 PromptConfig promptConfig) {
         this.promptAssemblyService = promptAssemblyService;
@@ -80,7 +95,6 @@ public class GenerationController {
                     return;
                 }
 
-                // Use dynamic prompt assembly when bookId is provided
                 String systemPrompt;
                 if (req.getBookId() != null) {
                     systemPrompt = promptAssemblyService.buildContinuePrompt(req.getBookId(),
@@ -89,7 +103,6 @@ public class GenerationController {
                     systemPrompt = promptConfig.get("continue", FALLBACK_CONTINUE);
                 }
 
-                // Truncate for DeepSeek API payload
                 String context = fullContext.length() > 2000
                     ? fullContext.substring(fullContext.length() - 2000)
                     : fullContext;
@@ -98,12 +111,26 @@ public class GenerationController {
                     + "---前文开始---\n" + context + "\n---前文结束---\n\n"
                     + req.getInstructions();
 
-                streamFromDeepSeek(emitter, systemPrompt, userMsg,
+                String generated = streamFromDeepSeek(emitter, systemPrompt, userMsg,
                     req.getTemperature() != null ? req.getTemperature() : 1.2,
                     req.getTopP() != null ? req.getTopP() : 0.95,
                     req.getFrequencyPenalty() != null ? req.getFrequencyPenalty() : 0.3,
                     req.getPresencePenalty() != null ? req.getPresencePenalty() : 0.2,
                     req.getMaxTokens() != null ? req.getMaxTokens() : 800);
+
+                // Lightweight consistency check after generation
+                if (!generated.isBlank() && generated.length() > 100) {
+                    try {
+                        String issues = checkConsistency(
+                            truncate(fullContext, 3000), generated);
+                        emitter.send(SseEmitter.event().name("consistency").data(issues));
+                    } catch (Exception e) {
+                        log.warn("Consistency check failed (non-blocking): {}", e.getMessage());
+                    }
+                }
+
+                emitter.send(SseEmitter.event().name("done").data(""));
+                emitter.complete();
             } catch (Exception e) {
                 handleException(emitter, e);
             }
@@ -137,11 +164,13 @@ public class GenerationController {
                 String userMsg = "请对以下段落进行" + getModeLabel(mode) + "：\n\n"
                     + "---原文开始---\n" + context + "\n---原文结束---";
 
-                // rewrite uses lower temperature for fidelity
                 streamFromDeepSeek(emitter, rewritePrompt, userMsg,
                     req.getTemperature() != null ? req.getTemperature() : 0.8,
                     1.0, 0.0, 0.0,
                     req.getMaxTokens() != null ? req.getMaxTokens() : 1200);
+
+                emitter.send(SseEmitter.event().name("done").data(""));
+                emitter.complete();
             } catch (Exception e) {
                 handleException(emitter, e);
             }
@@ -150,7 +179,57 @@ public class GenerationController {
         return emitter;
     }
 
-    private void streamFromDeepSeek(SseEmitter emitter, String systemPrompt, String userMessage,
+    // ── Consistency check ──
+
+    private String checkConsistency(String beforeContext, String newContent) {
+        String userMsg = "前文：\n" + beforeContext + "\n\n新生成内容：\n" + newContent;
+
+        try {
+            Map<String, Object> body = Map.of(
+                "model", "deepseek-chat",
+                "messages", List.of(
+                    Map.of("role", "system", "content", CONSISTENCY_PROMPT),
+                    Map.of("role", "user", "content", userMsg)
+                ),
+                "temperature", 0.1,
+                "max_tokens", 400,
+                "stream", false
+            );
+
+            String json = objectMapper.writeValueAsString(body);
+
+            HttpRequest httpReq = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/v1/chat/completions"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + apiKey)
+                .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                .build();
+
+            HttpResponse<String> resp = httpClient.send(httpReq,
+                HttpResponse.BodyHandlers.ofString());
+
+            if (resp.statusCode() == 200) {
+                var root = objectMapper.readTree(resp.body());
+                var choices = root.get("choices");
+                if (choices != null && choices.size() > 0) {
+                    String content = choices.get(0).get("message").get("content").asText();
+                    // Extract JSON from response (strip markdown code fences if present)
+                    content = content.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
+                    return content;
+                }
+            } else {
+                log.warn("Consistency API error {}: {}", resp.statusCode(), resp.body());
+            }
+        } catch (Exception e) {
+            log.warn("Consistency check error: {}", e.getMessage());
+        }
+        return "{\"issues\":[]}";
+    }
+
+    // ── Streaming ──
+
+    /** Streams from DeepSeek and returns the full generated text. */
+    private String streamFromDeepSeek(SseEmitter emitter, String systemPrompt, String userMessage,
                                     double temperature, double topP, double freqPenalty,
                                     double presPenalty, int maxTokens) throws Exception {
         Map<String, Object> body = Map.of(
@@ -183,8 +262,10 @@ public class GenerationController {
             String errBody = new String(resp.body().readAllBytes(), StandardCharsets.UTF_8);
             log.error("DeepSeek API error {}: {}", resp.statusCode(), errBody);
             sendError(emitter, "AI 服务返回错误");
-            return;
+            return "";
         }
+
+        StringBuilder fullText = new StringBuilder();
 
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(resp.body(), StandardCharsets.UTF_8))) {
@@ -202,6 +283,7 @@ public class GenerationController {
                             if (delta != null && delta.has("content")) {
                                 String chunk = delta.get("content").asText();
                                 if (!chunk.isEmpty()) {
+                                    fullText.append(chunk);
                                     emitter.send(SseEmitter.event().name("chunk").data(chunk));
                                 }
                             }
@@ -212,8 +294,14 @@ public class GenerationController {
                 }
             }
         }
-        emitter.send(SseEmitter.event().name("done").data(""));
-        emitter.complete();
+        return fullText.toString();
+    }
+
+    // ── Helpers ──
+
+    private static String truncate(String text, int maxChars) {
+        if (text == null || text.length() <= maxChars) return text != null ? text : "";
+        return text.substring(text.length() - maxChars);
     }
 
     private void sendError(SseEmitter emitter, String message) {
