@@ -68,3 +68,23 @@
 - **草稿箱统一**：DraftsDrawer.vue 可复用组件，CharacterList/WorldSetting/OutlineEditor 三个页面均加入草稿箱入口
 - **Bug 修复**：CharacterList "应用"按钮（缺少 relationships: []）、端口 5173 冲突、V9 migration 补 BaseEntity 列
 - **环境配置**：application-local.yml（gitignored）存储本地密钥，Spring profiles 管理
+- **枚举本地化**：CharacterMode/CreationMode/LengthType 增加中文标签 + JsonCreator
+
+### 2026-05-25 — Phase 2 启动
+
+- **轻量一致性检查**：续写完成后自动用 DeepSeek 提取实体交叉比对前文，矛盾标黄提示
+- **温度参数前端可调**：ChapterWrite 工具栏 🔥 滑块 0.3-2.0，默认 1.2
+- **AI 中止优化**：AbortController 替代 window.location.reload()，停止生成不刷新页面
+- **章节快速导航**：上一章/下一章按钮 + Ctrl+←→ 快捷键，基于大纲树计算兄弟顺序
+- **大纲拖拽排序**：已有完整 HTML5 原生拖拽实现（确认无需新增）
+- **文档更新**：竞品对比同步 Phase 2 进度，SYNC.md 日志更新
+- **6 commits 已推送**：P1 收尾 + Phase 2 第一二批
+
+### 2026-05-25 (续) — Phase 2 完成
+
+- **智能改写完善**：前端 ChapterWrite 模式切换（续写/润色/扩写/缩写），后端 GenerationController 已有三种 rewrite prompt，确认打通
+- **版本对比（双栏并排）**：ChapterWrite 版本面板加 compareA/compareB 选择 + computeDiff 行级 diff，DiffViewer 内联
+- **流式中断恢复**：V10 migration 加 stream_buffer 列，后端每 200 字持久化 buffer，前端 onMounted 检测恢复/丢弃
+- **E2E 冒烟测试**：SmokeTest 3 条用例（中文关键词提取、空输入、去重排序）全部通过
+- **1 commit 已提交**：Phase 2 第三四批（11 files, +310/-15）
+- Phase 2 全部 9 项任务完成
