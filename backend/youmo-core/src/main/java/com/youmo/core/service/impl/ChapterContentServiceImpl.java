@@ -108,4 +108,34 @@ public class ChapterContentServiceImpl implements ChapterContentService {
         result.sort(Comparator.comparingInt(ChapterContent::getVersionNumber).reversed());
         return result;
     }
+
+    @Override
+    @Transactional
+    public void updateStreamBuffer(Long structureId, String buffer) {
+        chapterContentRepository
+            .findTopByStructureIdOrderByVersionNumberDesc(structureId)
+            .ifPresent(c -> {
+                c.setStreamBuffer(buffer);
+                chapterContentRepository.save(c);
+            });
+    }
+
+    @Override
+    public String getStreamBuffer(Long structureId) {
+        return chapterContentRepository
+            .findTopByStructureIdOrderByVersionNumberDesc(structureId)
+            .map(ChapterContent::getStreamBuffer)
+            .orElse(null);
+    }
+
+    @Override
+    @Transactional
+    public void clearStreamBuffer(Long structureId) {
+        chapterContentRepository
+            .findTopByStructureIdOrderByVersionNumberDesc(structureId)
+            .ifPresent(c -> {
+                c.setStreamBuffer(null);
+                chapterContentRepository.save(c);
+            });
+    }
 }

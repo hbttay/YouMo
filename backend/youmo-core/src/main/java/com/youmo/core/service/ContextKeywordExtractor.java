@@ -80,6 +80,7 @@ public class ContextKeywordExtractor {
      */
     public Set<String> extractKeywords(String text) {
         Set<String> result = new HashSet<>();
+        if (text == null || text.isBlank()) return result;
         String[] segments = SEGMENT_SPLIT.split(text);
         for (String seg : segments) {
             seg = seg.strip();

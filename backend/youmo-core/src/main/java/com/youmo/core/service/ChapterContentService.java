@@ -11,4 +11,10 @@ public interface ChapterContentService {
     Optional<ChapterContent> getLatest(Long structureId);
 
     List<ChapterContent> getVersionHistory(Long structureId);
+
+    void updateStreamBuffer(Long structureId, String buffer);
+
+    String getStreamBuffer(Long structureId);
+
+    void clearStreamBuffer(Long structureId);
 }

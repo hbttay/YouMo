@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.youmo.api.config.PromptConfig;
 import com.youmo.api.dto.request.ContinueRequest;
 import com.youmo.api.dto.request.RewriteRequest;
+import com.youmo.core.service.ChapterContentService;
 import com.youmo.core.service.PromptAssemblyService;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -14,8 +15,11 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,8 +41,7 @@ public class GenerationController {
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final PromptAssemblyService promptAssemblyService;
     private final PromptConfig promptConfig;
-
-    // ── Fallback prompts (used when youmo-prompts/ directory is absent) ──
+    private final ChapterContentService chapterContentService;
 
     private static final String FALLBACK_CONTINUE = """
         你是一个专业的小说续写助手。根据提供的上下文续写下一段内容。
@@ -78,9 +81,17 @@ public class GenerationController {
         """;
 
     public GenerationController(PromptAssemblyService promptAssemblyService,
-                                PromptConfig promptConfig) {
+                                PromptConfig promptConfig,
+                                ChapterContentService chapterContentService) {
         this.promptAssemblyService = promptAssemblyService;
         this.promptConfig = promptConfig;
+        this.chapterContentService = chapterContentService;
+    }
+
+    @GetMapping("/stream-buffer/{structureId}")
+    public Map<String, String> getStreamBuffer(@PathVariable Long structureId) {
+        String buffer = chapterContentService.getStreamBuffer(structureId);
+        return Map.of("buffer", buffer != null ? buffer : "");
     }
 
     @PostMapping(value = "/continue", produces = "text/event-stream;charset=UTF-8")
@@ -111,12 +122,31 @@ public class GenerationController {
                     + "---前文开始---\n" + context + "\n---前文结束---\n\n"
                     + req.getInstructions();
 
+                // Stream buffer for recovery on disconnect
+                StringBuilder streamBuffer = new StringBuilder();
+                Long sid = req.getStructureId();
+                if (sid != null) {
+                    chapterContentService.clearStreamBuffer(sid);
+                }
+
                 String generated = streamFromDeepSeek(emitter, systemPrompt, userMsg,
                     req.getTemperature() != null ? req.getTemperature() : 1.2,
                     req.getTopP() != null ? req.getTopP() : 0.95,
                     req.getFrequencyPenalty() != null ? req.getFrequencyPenalty() : 0.3,
                     req.getPresencePenalty() != null ? req.getPresencePenalty() : 0.2,
-                    req.getMaxTokens() != null ? req.getMaxTokens() : 800);
+                    req.getMaxTokens() != null ? req.getMaxTokens() : 800,
+                    chunk -> {
+                        streamBuffer.append(chunk);
+                        if (sid != null && streamBuffer.length() % 200 == 0) {
+                            safeUpdateBuffer(sid, streamBuffer.toString());
+                        }
+                    });
+
+                // Save final buffer content and clear
+                if (sid != null) {
+                    safeUpdateBuffer(sid, streamBuffer.toString());
+                    chapterContentService.clearStreamBuffer(sid);
+                }
 
                 // Lightweight consistency check after generation
                 if (!generated.isBlank() && generated.length() > 100) {
@@ -132,11 +162,20 @@ public class GenerationController {
                 emitter.send(SseEmitter.event().name("done").data(""));
                 emitter.complete();
             } catch (Exception e) {
+                // On error, the buffer stays for recovery
                 handleException(emitter, e);
             }
         }).start();
 
         return emitter;
+    }
+
+    private void safeUpdateBuffer(Long structureId, String buffer) {
+        try {
+            chapterContentService.updateStreamBuffer(structureId, buffer);
+        } catch (Exception e) {
+            log.debug("Failed to update stream buffer: {}", e.getMessage());
+        }
     }
 
     @PostMapping(value = "/rewrite", produces = "text/event-stream;charset=UTF-8")
@@ -167,7 +206,8 @@ public class GenerationController {
                 streamFromDeepSeek(emitter, rewritePrompt, userMsg,
                     req.getTemperature() != null ? req.getTemperature() : 0.8,
                     1.0, 0.0, 0.0,
-                    req.getMaxTokens() != null ? req.getMaxTokens() : 1200);
+                    req.getMaxTokens() != null ? req.getMaxTokens() : 1200,
+                    null);
 
                 emitter.send(SseEmitter.event().name("done").data(""));
                 emitter.complete();
@@ -213,7 +253,6 @@ public class GenerationController {
                 var choices = root.get("choices");
                 if (choices != null && choices.size() > 0) {
                     String content = choices.get(0).get("message").get("content").asText();
-                    // Extract JSON from response (strip markdown code fences if present)
                     content = content.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
                     return content;
                 }
@@ -228,10 +267,10 @@ public class GenerationController {
 
     // ── Streaming ──
 
-    /** Streams from DeepSeek and returns the full generated text. */
     private String streamFromDeepSeek(SseEmitter emitter, String systemPrompt, String userMessage,
                                     double temperature, double topP, double freqPenalty,
-                                    double presPenalty, int maxTokens) throws Exception {
+                                    double presPenalty, int maxTokens,
+                                    Consumer<String> onChunk) throws Exception {
         Map<String, Object> body = Map.of(
             "model", "deepseek-chat",
             "messages", List.of(
@@ -285,6 +324,7 @@ public class GenerationController {
                                 if (!chunk.isEmpty()) {
                                     fullText.append(chunk);
                                     emitter.send(SseEmitter.event().name("chunk").data(chunk));
+                                    if (onChunk != null) onChunk.accept(chunk);
                                 }
                             }
                         }

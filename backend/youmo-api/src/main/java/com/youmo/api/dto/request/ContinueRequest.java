@@ -12,4 +12,5 @@ public class ContinueRequest {
     private Double frequencyPenalty = 0.3;
     private Double presencePenalty = 0.2;
     private Integer maxTokens = 800;
+    private Long structureId;
 }

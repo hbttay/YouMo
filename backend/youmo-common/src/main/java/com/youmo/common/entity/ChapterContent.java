@@ -54,4 +54,7 @@ public class ChapterContent extends BaseEntity {
 
     @Column(name = "diff_data", columnDefinition = "text")
     private String diffData;
+
+    @Column(name = "stream_buffer", columnDefinition = "text")
+    private String streamBuffer;
 }

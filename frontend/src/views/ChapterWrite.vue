@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getChapterContent, saveChapterContent, getOutline, getVersionHistory } from '@/api/book'
-import { streamContinue, streamRewrite } from '@/api/generation'
+import { streamContinue, streamRewrite, getStreamBuffer } from '@/api/generation'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
 const route = useRoute()
@@ -135,6 +135,8 @@ const genTarget = ref(null) // 'chapter' | sceneId — which textarea is receivi
 const consistencyIssues = ref([]) // consistency check results
 const temperature = ref(1.2) // AI temperature (0.3-2.0)
 let abortController = null
+const recovering = ref(false) // stream buffer recovery state
+const recoveredText = ref('')
 
 function handleAiContinue(target) {
   genTarget.value = target
@@ -159,7 +161,7 @@ function handleAiContinue(target) {
   generating.value = true
   abortController = new AbortController()
   streamContinue(
-    { bookId: bookId, context: ctx, temperature: temperature.value, signal: abortController.signal },
+    { bookId: bookId, context: ctx, temperature: temperature.value, signal: abortController.signal, structureId: structureId },
     {
       onChunk(chunk) {
         if (target === 'chapter') {
@@ -246,12 +248,13 @@ function handleRewrite(target) {
   rewriteTarget.value = target
   originalText.value = ctx
   rewriting.value = true
+  abortController = new AbortController()
 
   // clear current content and stream in rewritten version
   setRewriteContent(target, '')
 
   streamRewrite(
-    { context: ctx, mode: rewriteMode.value },
+    { context: ctx, mode: rewriteMode.value, signal: abortController.signal },
     {
       onChunk(chunk) {
         if (target === 'chapter') chapterContent.value += chunk
@@ -303,6 +306,9 @@ const showVersions = ref(false)
 const versions = ref([])
 const viewingVersion = ref(null) // version number being previewed
 const versionPreview = ref('')
+const compareA = ref(null) // first version for diff
+const compareB = ref(null) // second version for diff
+const diffLines = ref([]) // [{ type: 'same'|'added'|'removed', text: '...' }]
 
 async function openVersions() {
   showVersions.value = true
@@ -318,6 +324,38 @@ function closeVersions() {
   showVersions.value = false
   viewingVersion.value = null
   versionPreview.value = ''
+  compareA.value = null
+  compareB.value = null
+  diffLines.value = []
+}
+
+function selectCompare(ver) {
+  if (!compareA.value) {
+    compareA.value = ver
+  } else if (!compareB.value && compareA.value.id !== ver.id) {
+    compareB.value = ver
+  } else {
+    compareA.value = ver
+    compareB.value = null
+  }
+}
+
+function computeDiff() {
+  if (!compareA.value || !compareB.value) return
+  const a = (compareA.value.content || '').split('\n')
+  const b = (compareB.value.content || '').split('\n')
+  const result = []
+  const maxLen = Math.max(a.length, b.length)
+  for (let i = 0; i < maxLen; i++) {
+    const la = i < a.length ? a[i] : ''
+    const lb = i < b.length ? b[i] : ''
+    if (la === lb) {
+      result.push({ type: 'same', a: la, b: lb })
+    } else {
+      result.push({ type: 'diff', a: la, b: lb })
+    }
+  }
+  diffLines.value = result
 }
 
 async function viewVersion(ver) {
@@ -439,9 +477,30 @@ async function loadContent() {
         }
       } catch (e) { /* 新内容 */ }
     }
+    // Check for uncompleted stream buffer
+    try {
+      const { buffer } = await getStreamBuffer(structureId)
+      if (buffer) {
+        recovering.value = true
+        recoveredText.value = buffer
+      }
+    } catch (e) { /* ignore */ }
   } finally {
     loading.value = false
   }
+}
+
+function applyRecovery() {
+  const target = scenes.value.length ? 'chapter' : null
+  setRewriteContent(target, recoveredText.value)
+  recovering.value = false
+  recoveredText.value = ''
+  doSave('DRAFT')
+}
+
+function discardRecovery() {
+  recovering.value = false
+  recoveredText.value = ''
 }
 
 // ── Auto-save ──
@@ -537,6 +596,13 @@ onBeforeRouteLeave((_to, _from, next) => {
           定稿
         </button>
       </div>
+    </div>
+
+    <!-- Stream recovery -->
+    <div v-if="recovering" class="recovery-banner">
+      <span>检测到上次生成中断，有 {{ recoveredText.length }} 字未保存的内容可以恢复</span>
+      <button class="btn-recover" @click="applyRecovery">恢复</button>
+      <button class="btn-recover-discard" @click="discardRecovery">丢弃</button>
     </div>
 
     <!-- AI error / status -->
@@ -647,7 +713,7 @@ onBeforeRouteLeave((_to, _from, next) => {
 
     <!-- Version History Panel -->
     <div v-if="showVersions" class="version-overlay" @click.self="closeVersions">
-      <div class="version-panel">
+      <div class="version-panel" :class="{ wide: diffLines.length }">
         <div class="version-panel-header">
           <h3>版本历史</h3>
           <button class="version-close" @click="closeVersions">&times;</button>
@@ -661,12 +727,32 @@ onBeforeRouteLeave((_to, _from, next) => {
           <textarea readonly class="write-textarea preview-area" :value="versionPreview"></textarea>
         </div>
 
+        <div v-else-if="diffLines.length" class="diff-view">
+          <div class="diff-header">
+            <button class="btn-back" @click="diffLines = []; compareA = null; compareB = null">&larr; 返回列表</button>
+            <span>v{{ compareA?.version_number }} vs v{{ compareB?.version_number }}</span>
+          </div>
+          <div class="diff-container">
+            <div v-for="(line, i) in diffLines" :key="i" class="diff-row" :class="line.type">
+              <div class="diff-a">{{ line.a }}</div>
+              <div class="diff-b">{{ line.b }}</div>
+            </div>
+          </div>
+        </div>
+
         <div v-else class="version-list">
+          <div v-if="compareA || compareB" class="compare-hint">
+            <span v-if="compareA && !compareB">已选 v{{ compareA.version_number }}，再选一个版本进行对比</span>
+            <span v-else-if="compareA && compareB">已选 v{{ compareA.version_number }} 和 v{{ compareB.version_number }}</span>
+            <button class="btn-sm btn-compare" :disabled="!compareA || !compareB" @click="computeDiff">对比</button>
+            <button class="btn-sm btn-clear" @click="compareA = null; compareB = null">取消</button>
+          </div>
           <div v-if="versions.length === 0" class="version-empty">暂无历史版本</div>
           <div
             v-for="ver in versions"
             :key="ver.version_number"
             class="version-item"
+            :class="{ selected: compareA?.id === ver.id || compareB?.id === ver.id }"
           >
             <div class="version-info">
               <span class="version-num">v{{ ver.version_number }}</span>
@@ -681,6 +767,7 @@ onBeforeRouteLeave((_to, _from, next) => {
             <div class="version-actions">
               <button class="btn-sm btn-view" @click="viewVersion(ver)">查看</button>
               <button class="btn-sm btn-restore" @click="restoreVersion(ver)">恢复</button>
+              <button class="btn-sm btn-select" @click="selectCompare(ver)">对比</button>
             </div>
           </div>
         </div>
@@ -836,6 +923,24 @@ onBeforeRouteLeave((_to, _from, next) => {
   transition: opacity 0.15s;
 }
 .btn-ai-sm:hover { opacity: 0.8; }
+.recovery-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; margin-bottom: 12px;
+  background: #fffbeb; border: 1px solid #fde68a;
+  border-radius: 8px; font-size: 13px; color: #92400e;
+}
+.btn-recover {
+  padding: 5px 16px; border: none; border-radius: 6px;
+  background: #5b3cc4; color: #fff; font-size: 13px; font-weight: 500;
+  cursor: pointer; font-family: inherit;
+}
+.btn-recover:hover { background: #4a2fa8; }
+.btn-recover-discard {
+  padding: 5px 16px; border: 1px solid #d1d5db; border-radius: 6px;
+  background: var(--bg-surface); color: var(--text-secondary); font-size: 13px;
+  cursor: pointer; font-family: inherit;
+}
+
 .gen-error {
   padding: 8px 16px; margin-bottom: 12px;
   background: var(--bg-error-soft); color: var(--color-danger);
@@ -1111,6 +1216,42 @@ onBeforeRouteLeave((_to, _from, next) => {
   background: var(--bg-surface);
 }
 .version-item:hover { border-color: #d0c8e8; }
+.version-item.selected { border-color: #5b3cc4; background: #f5f3ff; }
+
+/* ── Compare ── */
+.compare-hint {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 16px; margin-bottom: 12px;
+  background: #f5f3ff; border: 1px solid #d4c5f0; border-radius: 8px;
+  font-size: 12px; color: #5b3cc4;
+}
+.btn-compare { padding: 5px 14px; border: none; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit; background: #5b3cc4; color: #fff; }
+.btn-compare:hover:not(:disabled) { background: #4a2fa8; }
+.btn-compare:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-clear { padding: 5px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; background: var(--bg-surface); }
+.btn-select { padding: 5px 10px; border: 1px solid var(--border-color); border-radius: 5px; font-size: 11px; cursor: pointer; font-family: inherit; background: var(--bg-surface); }
+.btn-select:hover { border-color: #5b3cc4; color: #5b3cc4; }
+
+.version-panel.wide { width: 760px; }
+
+/* ── Diff view ── */
+.diff-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.diff-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-color);
+  font-size: 14px; font-weight: 500; flex-shrink: 0;
+}
+.diff-container { flex: 1; overflow-y: auto; }
+.diff-row { display: flex; border-bottom: 1px solid #f0f0f0; font-size: 12px; line-height: 1.6; min-height: 22px; }
+.diff-row.diff { background: #fef2f2; }
+.diff-row.same { background: transparent; }
+.diff-a, .diff-b {
+  flex: 1; min-width: 0; padding: 2px 8px; white-space: pre-wrap; word-break: break-all;
+  overflow-wrap: break-word;
+}
+.diff-a { border-right: 1px solid var(--border-color); }
+.diff-row.diff .diff-a { background: #fee2e2; }
+.diff-row.diff .diff-b { background: #dcfce7; }
 .version-info {
   display: flex; flex-direction: column; gap: 3px;
 }

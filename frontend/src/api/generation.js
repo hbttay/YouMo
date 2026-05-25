@@ -56,7 +56,7 @@ function authHeaders() {
 /**
  * AI 续写 — SSE streaming
  */
-export async function streamContinue({ bookId, context, instructions, temperature, topP, frequencyPenalty, presencePenalty, maxTokens, signal }, callbacks) {
+export async function streamContinue({ bookId, context, instructions, temperature, topP, frequencyPenalty, presencePenalty, maxTokens, signal, structureId }, callbacks) {
   try {
     const resp = await fetch('/api/generation/continue', {
       method: 'POST',
@@ -71,6 +71,7 @@ export async function streamContinue({ bookId, context, instructions, temperatur
         frequency_penalty: frequencyPenalty ?? 0.3,
         presence_penalty: presencePenalty ?? 0.2,
         max_tokens: maxTokens ?? 800,
+        structure_id: structureId,
       }),
     })
 
@@ -88,11 +89,12 @@ export async function streamContinue({ bookId, context, instructions, temperatur
 /**
  * AI 改写 — 润色/扩写/缩写 SSE streaming
  */
-export async function streamRewrite({ context, mode, temperature, maxTokens }, callbacks) {
+export async function streamRewrite({ context, mode, temperature, maxTokens, signal }, callbacks) {
   try {
     const resp = await fetch('/api/generation/rewrite', {
       method: 'POST',
       headers: authHeaders(),
+      signal,
       body: JSON.stringify({
         context,
         mode: mode || 'polish',
@@ -108,8 +110,17 @@ export async function streamRewrite({ context, mode, temperature, maxTokens }, c
     }
     await readSSE(resp, callbacks)
   } catch (e) {
-    callbacks.onError?.(e.message || '网络错误')
+    callbacks.onError?.(e.name === 'AbortError' ? 'AbortError' : (e.message || '网络错误'))
   }
+}
+
+/** Check for uncompleted stream buffer */
+export async function getStreamBuffer(structureId) {
+  const resp = await fetch(`/api/generation/stream-buffer/${structureId}`, {
+    headers: authHeaders(),
+  })
+  if (!resp.ok) return { buffer: '' }
+  return resp.json()
 }
 
 // ── 生成状态 ──
