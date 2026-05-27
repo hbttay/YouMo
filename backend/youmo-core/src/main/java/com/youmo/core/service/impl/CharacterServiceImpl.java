@@ -37,16 +37,17 @@ public class CharacterServiceImpl implements CharacterService {
     public Character update(Long id, Character updates) {
         Character character = characterRepository.findById(id)
                 .orElseThrow(() -> new BusinessException(404, "角色不存在"));
-        character.setName(updates.getName());
-        character.setGender(updates.getGender());
-        character.setAgeDescription(updates.getAgeDescription());
-        character.setAppearance(updates.getAppearance());
-        character.setOrigin(updates.getOrigin());
-        character.setIdentity(updates.getIdentity());
-        character.setDepthLevel(updates.getDepthLevel());
-        character.setIsArchived(updates.getIsArchived());
-        character.setAppearChapters(updates.getAppearChapters());
-        character.setExtraAttributes(updates.getExtraAttributes());
+        if (updates.getName() != null) character.setName(updates.getName());
+        if (updates.getGender() != null) character.setGender(updates.getGender());
+        if (updates.getAgeDescription() != null) character.setAgeDescription(updates.getAgeDescription());
+        if (updates.getAppearance() != null) character.setAppearance(updates.getAppearance());
+        if (updates.getOrigin() != null) character.setOrigin(updates.getOrigin());
+        if (updates.getIdentity() != null) character.setIdentity(updates.getIdentity());
+        if (updates.getRace() != null) character.setRace(updates.getRace());
+        if (updates.getDepthLevel() != null) character.setDepthLevel(updates.getDepthLevel());
+        if (updates.getIsArchived() != null) character.setIsArchived(updates.getIsArchived());
+        if (updates.getAppearChapters() != null) character.setAppearChapters(updates.getAppearChapters());
+        if (updates.getExtraAttributes() != null) character.setExtraAttributes(updates.getExtraAttributes());
         return characterRepository.save(character);
     }
 

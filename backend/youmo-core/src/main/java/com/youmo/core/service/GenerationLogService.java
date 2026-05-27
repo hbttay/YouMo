@@ -8,4 +8,7 @@ public interface GenerationLogService {
     GenerationLog log(GenerationLog log);
 
     List<GenerationLog> listByStructureId(Long structureId);
+
+    void logNonStreaming(String responseBody, String model, long durationMs,
+                         Long structureId, String promptSnapshot, boolean success);
 }

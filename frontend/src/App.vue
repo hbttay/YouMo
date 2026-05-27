@@ -33,11 +33,7 @@ function handleLogout() {
       </nav>
     </header>
     <main class="app-main">
-      <router-view v-slot="{ Component }">
-        <Transition name="fade" mode="out-in">
-          <component :is="Component" />
-        </Transition>
-      </router-view>
+      <router-view />
     </main>
   </div>
 </template>
@@ -87,7 +83,7 @@ function handleLogout() {
 .app-main {
   flex: 1;
   padding: 32px;
-  max-width: 960px;
+  max-width: 1140px;
   width: 100%;
   margin: 0 auto;
   box-sizing: border-box;

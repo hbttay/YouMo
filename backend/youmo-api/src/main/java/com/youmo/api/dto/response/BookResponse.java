@@ -1,6 +1,7 @@
 package com.youmo.api.dto.response;
 
 import com.youmo.common.entity.Book;
+import java.time.LocalDateTime;
 import lombok.Data;
 
 @Data
@@ -16,6 +17,8 @@ public class BookResponse {
     private String extraAttributes;
     private String negativeConstraints;
     private Long ownerId;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 
     public static BookResponse from(Book book) {
         BookResponse r = new BookResponse();
@@ -30,6 +33,8 @@ public class BookResponse {
         r.setExtraAttributes(book.getExtraAttributes());
         r.setNegativeConstraints(book.getNegativeConstraints());
         r.setOwnerId(book.getOwner().getId());
+        r.setCreatedAt(book.getCreatedAt());
+        r.setUpdatedAt(book.getUpdatedAt());
         return r;
     }
 }

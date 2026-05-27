@@ -2,16 +2,20 @@ package com.youmo.api.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.youmo.api.config.PromptConfig;
+import com.youmo.api.security.SecurityUtil;
+import com.youmo.common.base.BusinessException;
 import com.youmo.common.entity.Book;
 import com.youmo.core.service.BookService;
 import com.youmo.core.service.ChapterStructureService;
 import com.youmo.core.service.CharacterService;
+import com.youmo.core.service.GenerationLogService;
 import com.youmo.core.service.WorldSettingService;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,12 +41,15 @@ public class RandomController {
     private String baseUrl;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final HttpClient httpClient = HttpClient.newHttpClient();
+    private final HttpClient httpClient = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(10))
+        .build();
     private final BookService bookService;
     private final WorldSettingService worldSettingService;
     private final ChapterStructureService chapterStructureService;
     private final CharacterService characterService;
     private final PromptConfig promptConfig;
+    private final GenerationLogService generationLogService;
 
     // ── Fallback prompts (used when youmo-prompts/ directory is absent) ──
 
@@ -51,7 +58,19 @@ public class RandomController {
         """;
 
     private static final String FALLBACK_CHARACTER = """
-        你是一个小说角色生成器。按 JSON 格式输出角色信息，包含 name,gender,age_description,appearance,origin,identity,depth_level 字段。
+        你是一个小说角色生成器。按 JSON 格式输出角色信息，包含 name,gender,age_description,appearance,origin,identity,depth_level,race 字段。
+
+        depth_level 等级说明：
+        - L0：背景板 — 只被提及名字或身份的路人，如店小二、路人甲、报信侍卫。只需 name + identity
+        - L1：配角 — 推动单一情节的功能性角色，如送信人、一次性的反派手下。需 name + identity + 简短 appearance
+        - L2：重要配角 — 与主角有长期互动，有独立动机和成长弧，如导师、挚友、情敌。需完整字段
+        - L3：主角 — 故事核心人物，有完整的人物弧光和深层动机，与主线紧密绑定。需全部字段详实
+
+        生成规则：
+        1. 如果未指定等级，均匀分布 L0-L3，其中 L3 约占 15-20%
+        2. 角色名要有中文网文风格，避免英文名
+        3. 身份、出身要符合书籍世界观和总纲
+        4. 只输出 JSON，不要其他内容
         """;
 
     private static final String FALLBACK_WORLD = """
@@ -62,21 +81,39 @@ public class RandomController {
         你是一个小说大纲生成器。按 JSON 格式输出 volumes 数组，每卷包含 chapters，每章包含 scenes。2-3卷，每卷2-3章，每章1-3节。
         """;
 
+    private static final String FALLBACK_OUTLINE_EXPAND = """
+        你是一个小说大纲生成器。根据一句话梗概，扩展为完整大纲。
+        要求：
+        - 3-6卷，每卷2-4章，每章1-3节
+        - 各卷应有明确的故事阶段划分（开端/发展/转折/高潮/结局）
+        - 每节标题应暗示核心冲突或事件
+        输出JSON格式：{"volumes":[{"title":"卷名","summary":"卷概要","chapters":[{"title":"章名","scenes":[{"title":"节名"}]}]}]}
+        只输出JSON，不要其他内容。
+        """;
+
     public RandomController(BookService bookService,
                             WorldSettingService worldSettingService,
                             ChapterStructureService chapterStructureService,
                             CharacterService characterService,
-                            PromptConfig promptConfig) {
+                            PromptConfig promptConfig,
+                            GenerationLogService generationLogService) {
         this.bookService = bookService;
         this.worldSettingService = worldSettingService;
         this.chapterStructureService = chapterStructureService;
         this.characterService = characterService;
         this.promptConfig = promptConfig;
+        this.generationLogService = generationLogService;
     }
 
     // ── Non-streaming DeepSeek call ──
     private String callDeepSeek(String systemPrompt, String userMessage, double temperature, int maxTokens)
             throws Exception {
+        return callDeepSeek(systemPrompt, userMessage, temperature, maxTokens, null);
+    }
+
+    private String callDeepSeek(String systemPrompt, String userMessage, double temperature, int maxTokens,
+                                Long structureId) throws Exception {
+        long start = System.currentTimeMillis();
         Map<String, Object> body = Map.of(
             "model", "deepseek-chat",
             "messages", List.of(
@@ -96,14 +133,23 @@ public class RandomController {
             .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
             .build();
 
-        HttpResponse<String> resp = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() != 200) {
-            log.error("DeepSeek API error {}: {}", resp.statusCode(), resp.body());
-            throw new RuntimeException("AI 服务返回错误");
+        boolean success = true;
+        String responseBody = null;
+        try {
+            HttpResponse<String> resp = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofString());
+            responseBody = resp.body();
+            if (resp.statusCode() != 200) {
+                success = false;
+                log.error("DeepSeek API error {}: {}", resp.statusCode(), responseBody);
+                throw new RuntimeException("AI 服务返回错误");
+            }
+            var node = objectMapper.readTree(responseBody);
+            return node.get("choices").get(0).get("message").get("content").asText().strip();
+        } finally {
+            long duration = System.currentTimeMillis() - start;
+            generationLogService.logNonStreaming(responseBody, "deepseek-chat", duration,
+                structureId, systemPrompt + "\n\n" + userMessage, success);
         }
-
-        var node = objectMapper.readTree(resp.body());
-        return node.get("choices").get(0).get("message").get("content").asText().strip();
     }
 
     private String extractJson(String text) {
@@ -118,9 +164,20 @@ public class RandomController {
         return text;
     }
 
+    private void assertOwnership(Long bookId) {
+        Long userId = SecurityUtil.getCurrentUserId();
+        if (!bookService.existsById(bookId)) {
+            throw new BusinessException(404, "书籍不存在");
+        }
+        if (!bookService.isOwner(bookId, userId)) {
+            throw new BusinessException(403, "无权访问此书");
+        }
+    }
+
     // ── 0. 生成状态检查 ──
     @GetMapping("/status/{bookId}")
     public ResponseEntity<?> generationStatus(@PathVariable Long bookId) {
+        assertOwnership(bookId);
         Map<String, Boolean> status = new HashMap<>();
         status.put("synopsis", bookService.getById(bookId)
             .map(b -> b.getCoreIdea() != null && !b.getCoreIdea().isBlank()).orElse(false));
@@ -155,14 +212,26 @@ public class RandomController {
     public ResponseEntity<?> generateCharacter(@PathVariable Long bookId,
                                                @RequestBody(required = false) Map<String, String> req) {
         try {
+            assertOwnership(bookId);
             Book book = bookService.getById(bookId).orElse(null);
             String bookTitle = book != null ? book.getTitle() : "";
             String bookIdea = book != null && book.getCoreIdea() != null ? book.getCoreIdea() : "";
             String extra = req != null ? req.getOrDefault("hint", "") : "";
+            String depthLevel = req != null ? req.getOrDefault("depth_level", "") : "";
 
             String systemPrompt = promptConfig.get("random-character", FALLBACK_CHARACTER);
 
             StringBuilder userMsg = new StringBuilder("请生成一个角色。");
+            if (!depthLevel.isBlank()) {
+                String levelDesc = switch (depthLevel) {
+                    case "L3" -> "主角（L3）— 故事核心人物，有完整人物弧光和深层动机";
+                    case "L2" -> "重要配角（L2）— 与主角有长期互动，有独立动机";
+                    case "L1" -> "配角（L1）— 功能性角色，推动单一情节";
+                    case "L0" -> "背景板（L0）— 路人角色，只需名字和身份";
+                    default -> depthLevel;
+                };
+                userMsg.append("\n必须生成 ").append(levelDesc);
+            }
             if (!bookTitle.isBlank()) userMsg.append("\n所属书籍：《").append(bookTitle).append("》");
             if (!bookIdea.isBlank()) userMsg.append("\n书籍总纲：").append(bookIdea);
             if (!extra.isBlank()) userMsg.append("\n额外要求：").append(extra);
@@ -181,6 +250,7 @@ public class RandomController {
     public ResponseEntity<?> generateWorldSetting(@PathVariable Long bookId,
                                                   @RequestBody(required = false) Map<String, String> req) {
         try {
+            assertOwnership(bookId);
             Book book = bookService.getById(bookId).orElse(null);
             String bookTitle = book != null ? book.getTitle() : "";
             String bookIdea = book != null && book.getCoreIdea() != null ? book.getCoreIdea() : "";
@@ -207,6 +277,7 @@ public class RandomController {
     public ResponseEntity<?> generateOutline(@PathVariable Long bookId,
                                              @RequestBody(required = false) Map<String, String> req) {
         try {
+            assertOwnership(bookId);
             Book book = bookService.getById(bookId).orElse(null);
             String bookTitle = book != null ? book.getTitle() : "";
             String bookIdea = book != null && book.getCoreIdea() != null ? book.getCoreIdea() : "";
@@ -224,6 +295,40 @@ public class RandomController {
             return ResponseEntity.ok(objectMapper.readTree(json));
         } catch (Exception e) {
             log.error("Random outline failed", e);
+            return ResponseEntity.status(500).body(Map.of("message", "生成失败: " + e.getMessage()));
+        }
+    }
+
+    // ── 5. 一句话扩写大纲 ──
+    @PostMapping("/outline/expand/{bookId}")
+    public ResponseEntity<?> expandOutline(@PathVariable Long bookId,
+                                           @RequestBody(required = false) Map<String, String> req) {
+        try {
+            assertOwnership(bookId);
+            Book book = bookService.getById(bookId).orElse(null);
+            String bookTitle = book != null ? book.getTitle() : "";
+            String oneSentence = req != null ? req.getOrDefault("one_sentence", "") : "";
+            if (oneSentence.isBlank() && book != null && book.getOneSentence() != null) {
+                oneSentence = book.getOneSentence();
+            }
+            if (oneSentence.isBlank()) {
+                return ResponseEntity.badRequest()
+                    .body(Map.of("message", "请先填写一句话梗概"));
+            }
+
+            String systemPrompt = promptConfig.get("random-outline-expand", FALLBACK_OUTLINE_EXPAND);
+
+            StringBuilder userMsg = new StringBuilder("请根据以下梗概生成大纲：\n").append(oneSentence);
+            if (!bookTitle.isBlank()) userMsg.append("\n书名：《").append(bookTitle).append("》");
+            if (book != null && book.getCoreIdea() != null && !book.getCoreIdea().isBlank()) {
+                userMsg.append("\n核心创意：").append(book.getCoreIdea());
+            }
+
+            String result = callDeepSeek(systemPrompt, userMsg.toString(), 1.2, 1500);
+            String json = extractJson(result);
+            return ResponseEntity.ok(objectMapper.readTree(json));
+        } catch (Exception e) {
+            log.error("Outline expand failed", e);
             return ResponseEntity.status(500).body(Map.of("message", "生成失败: " + e.getMessage()));
         }
     }

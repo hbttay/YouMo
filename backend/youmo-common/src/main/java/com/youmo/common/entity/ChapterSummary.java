@@ -57,6 +57,9 @@ public class ChapterSummary extends BaseEntity {
     @Column(name = "is_permanent")
     private Boolean isPermanent = false;
 
+    @Column(name = "narrative_summary", columnDefinition = "TEXT")
+    private String narrativeSummary;
+
     @Column(name = "extra_attributes", columnDefinition = "jsonb")
     private String extraAttributes;
 }

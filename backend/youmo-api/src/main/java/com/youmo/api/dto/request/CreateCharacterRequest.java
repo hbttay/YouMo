@@ -12,5 +12,7 @@ public class CreateCharacterRequest {
     private String appearance;
     private String origin;
     private String identity;
+    private String race;
     private DepthLevel depthLevel = DepthLevel.L1;
+    private String extraAttributes;
 }

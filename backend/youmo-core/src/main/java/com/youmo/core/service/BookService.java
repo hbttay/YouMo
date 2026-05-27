@@ -10,9 +10,20 @@ public interface BookService {
 
     Optional<Book> getById(Long id);
 
+    /** @deprecated use listByOwner for multi-tenant isolation */
     List<Book> listAll();
+
+    List<Book> listByOwner(Long userId);
 
     Book update(Long id, Book updates);
 
     void delete(Long id);
+
+    boolean isOwner(Long bookId, Long userId);
+
+    Book getOwnedBook(Long bookId, Long userId);
+
+    boolean existsById(Long id);
+
+    void reorder(Long userId, List<Long> bookIds);
 }

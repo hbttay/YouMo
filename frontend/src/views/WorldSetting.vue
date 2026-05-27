@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getWorldSetting, saveWorldSetting, getBook, updateBook } from '@/api/book'
 import { randomWorldSetting } from '@/api/generation'
@@ -17,6 +17,26 @@ const { add: addDraft } = useDrafts(bookId)
 const injectionLevel = ref('STANDARD')
 const injectionSaving = ref(false)
 const injectionMsg = ref('')
+
+const fieldWeights = ref({
+  era: 5, geography: 5, history_events: 5,
+  politics: 5, economy: 5, culture: 5,
+  military: 5, core_rule: 5,
+})
+
+const FIELD_LABELS = {
+  era: '时代背景',
+  geography: '地理环境',
+  history_events: '历史事件',
+  politics: '政治体制',
+  economy: '经济体系',
+  culture: '文化',
+  military: '军事',
+  core_rule: '核心规则',
+}
+
+const weightSaving = ref(false)
+const weightMsg = ref('')
 
 const LEVEL_OPTIONS = [
   { value: 'MINIMAL', label: '精简', desc: '仅注入最相关的 2-3 个字段，~200 字，节省 token，适合对话/动作场景' },
@@ -57,6 +77,9 @@ async function loadSynopsis() {
     try {
       const attrs = JSON.parse(res.data?.extra_attributes || '{}')
       if (attrs.ai_injection_level) injectionLevel.value = attrs.ai_injection_level
+      if (attrs.ai_field_weights) {
+        fieldWeights.value = { ...fieldWeights.value, ...attrs.ai_field_weights }
+      }
     } catch {}
   }
 }
@@ -75,6 +98,23 @@ async function saveInjectionLevel() {
     injectionMsg.value = e.response?.data?.message || '保存失败'
   } finally {
     injectionSaving.value = false
+  }
+}
+
+async function saveFieldWeights() {
+  weightSaving.value = true
+  weightMsg.value = ''
+  try {
+    const res = await getBook(bookId)
+    const attrs = JSON.parse(res.data?.extra_attributes || '{}')
+    attrs.ai_field_weights = fieldWeights.value
+    await updateBook(bookId, { extra_attributes: JSON.stringify(attrs) })
+    weightMsg.value = '已保存'
+    setTimeout(() => { weightMsg.value = '' }, 2000)
+  } catch (e) {
+    weightMsg.value = e.response?.data?.message || '保存失败'
+  } finally {
+    weightSaving.value = false
   }
 }
 
@@ -165,12 +205,17 @@ async function handleSave() {
 }
 
 onMounted(() => { fetchSetting(bookId); loadSynopsis() })
+
+watch(() => route.params.id, (newId) => {
+  if (newId) { fetchSetting(newId); loadSynopsis() }
+})
 </script>
 
 <template>
   <div class="world-setting">
     <div class="page-header">
-      <router-link :to="`/books/${bookId}`" class="back-link">&larr; {{ bookTitle || '返回详情' }}</router-link>
+      <router-link v-if="route.query.from === 'hub'" to="/modules/world" class="back-link">&larr; 返回世界工坊</router-link>
+      <router-link v-else :to="`/books/${bookId}`" class="back-link">&larr; 返回书籍详情</router-link>
     </div>
 
     <div class="section-header">
@@ -261,6 +306,23 @@ onMounted(() => { fetchSetting(bookId); loadSynopsis() })
         </button>
         <span v-if="injectionMsg" class="injection-msg">{{ injectionMsg }}</span>
       </div>
+
+      <h3 style="margin-top: 24px;">字段权重</h3>
+      <p class="injection-desc">调整各世界观字段的注入优先级。权重越高，该字段越容易被 AI 续写时引用。</p>
+      <div class="weight-list">
+        <div v-for="(value, field) in fieldWeights" :key="field" class="weight-row">
+          <span class="weight-label">{{ FIELD_LABELS[field] || field }}</span>
+          <input type="range" min="0" max="10" v-model.number="fieldWeights[field]" class="weight-slider" />
+          <span class="weight-value">{{ fieldWeights[field] }}</span>
+        </div>
+      </div>
+
+      <div class="injection-footer">
+        <button class="btn-primary" :disabled="weightSaving" @click="saveFieldWeights">
+          {{ weightSaving ? '保存中...' : '保存权重' }}
+        </button>
+        <span v-if="weightMsg" class="injection-msg">{{ weightMsg }}</span>
+      </div>
     </div>
 
     <RandomPreviewModal
@@ -350,4 +412,21 @@ onMounted(() => { fetchSetting(bookId); loadSynopsis() })
   gap: 12px;
 }
 .injection-msg { font-size: 13px; color: var(--color-success); }
+
+.weight-list {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.weight-row {
+  display: flex; align-items: center; gap: 12px;
+}
+.weight-label {
+  width: 80px; font-size: 13px; color: var(--text-secondary); flex-shrink: 0;
+}
+.weight-slider {
+  flex: 1; height: 4px; accent-color: #7c3aed;
+}
+.weight-value {
+  width: 24px; font-size: 14px; font-weight: 600;
+  color: var(--text-primary); text-align: center; flex-shrink: 0;
+}
 </style>

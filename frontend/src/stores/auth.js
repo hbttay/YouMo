@@ -12,16 +12,17 @@ export const useAuthStore = defineStore('auth', {
   },
 
   actions: {
-    async login(email, password) {
-      const res = await apiLogin({ email, password })
+    async login(account, password) {
+      const res = await apiLogin({ account, password })
       this.token = res.data.token
       this.user = res.data.user
       localStorage.setItem('token', res.data.token)
       localStorage.setItem('user', JSON.stringify(res.data.user))
     },
 
-    async register(email, password) {
-      await apiRegister({ email, password })
+    async register(email, username, password) {
+      const res = await apiRegister({ email, username, password })
+      if (res.code !== 200) throw new Error(res.message || '注册失败')
     },
 
     logout() {

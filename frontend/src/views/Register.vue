@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 const router = useRouter()
 const authStore = useAuthStore()
 
-const form = ref({ email: '', password: '', confirmPassword: '' })
+const form = ref({ email: '', username: '', password: '', confirmPassword: '' })
 const error = ref('')
 const submitting = ref(false)
 
@@ -16,8 +16,8 @@ async function handleSubmit() {
     error.value = '请填写邮箱和密码'
     return
   }
-  if (form.value.password.length < 6) {
-    error.value = '密码至少 6 位'
+  if (form.value.password.length < 4) {
+    error.value = '密码至少 4 位'
     return
   }
   if (form.value.password !== form.value.confirmPassword) {
@@ -26,10 +26,10 @@ async function handleSubmit() {
   }
   submitting.value = true
   try {
-    await authStore.register(form.value.email, form.value.password)
+    await authStore.register(form.value.email, form.value.username, form.value.password)
     router.push({ name: 'Login', query: { registered: '1' } })
   } catch (e) {
-    error.value = e.response?.data?.message || '注册失败'
+    error.value = e.response?.data?.message || e.message || '注册失败'
   } finally {
     submitting.value = false
   }
@@ -46,8 +46,12 @@ async function handleSubmit() {
           <input v-model="form.email" type="email" placeholder="you@example.com" autocomplete="email" />
         </div>
         <div class="form-group">
+          <label>用户名（选填）</label>
+          <input v-model="form.username" type="text" placeholder="2-20位，中英文、数字、_-" autocomplete="username" />
+        </div>
+        <div class="form-group">
           <label>密码</label>
-          <input v-model="form.password" type="password" placeholder="至少 6 位" autocomplete="new-password" />
+          <input v-model="form.password" type="password" placeholder="至少 4 位" autocomplete="new-password" />
         </div>
         <div class="form-group">
           <label>确认密码</label>
@@ -79,7 +83,7 @@ async function handleSubmit() {
   max-width: 400px;
   padding: 40px;
   background: var(--bg-surface);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--border-color);
   border-radius: 12px;
 }
 .auth-card h1 {

@@ -23,6 +23,7 @@ public class BookServiceImpl implements BookService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Optional<Book> getById(Long id) {
         return bookRepository.findById(id);
     }
@@ -30,6 +31,11 @@ public class BookServiceImpl implements BookService {
     @Override
     public List<Book> listAll() {
         return bookRepository.findAll();
+    }
+
+    @Override
+    public List<Book> listByOwner(Long userId) {
+        return bookRepository.findAllByOwnerIdOrderBySequenceAsc(userId);
     }
 
     @Override
@@ -55,6 +61,36 @@ public class BookServiceImpl implements BookService {
         if (updates.getCreationMode() != null) book.setCreationMode(updates.getCreationMode());
         if (updates.getCharacterMode() != null) book.setCharacterMode(updates.getCharacterMode());
         return bookRepository.save(book);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isOwner(Long bookId, Long userId) {
+        return bookRepository.findById(bookId)
+                .map(b -> b.getOwner() != null && b.getOwner().getId().equals(userId))
+                .orElse(false);
+    }
+
+    @Override
+    public Book getOwnedBook(Long bookId, Long userId) {
+        return bookRepository.findByIdAndOwnerId(bookId, userId)
+                .orElseThrow(() -> new BusinessException(404, "书籍不存在或无权访问"));
+    }
+
+    @Override
+    public boolean existsById(Long id) {
+        return bookRepository.existsById(id);
+    }
+
+    @Override
+    @Transactional
+    public void reorder(Long userId, List<Long> bookIds) {
+        for (int i = 0; i < bookIds.size(); i++) {
+            Book book = bookRepository.findByIdAndOwnerId(bookIds.get(i), userId)
+                    .orElseThrow(() -> new BusinessException(404, "书籍不存在或无权访问"));
+            book.setSequence(i);
+            bookRepository.save(book);
+        }
     }
 
     @Override

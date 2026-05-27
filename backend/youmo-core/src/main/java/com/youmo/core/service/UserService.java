@@ -5,7 +5,7 @@ import java.util.Optional;
 
 public interface UserService {
 
-    User create(String email, String rawPassword);
+    User create(String email, String username, String rawPassword);
 
     Optional<User> getById(Long id);
 
@@ -13,7 +13,7 @@ public interface UserService {
 
     boolean existsByEmail(String email);
 
-    User login(String email, String rawPassword);
+    User login(String account, String rawPassword);
 
     void changePassword(Long userId, String oldPassword, String newPassword);
 

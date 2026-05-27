@@ -29,13 +29,13 @@ public class UserController {
 
     @PostMapping("/register")
     public ApiResponse<UserResponse> register(@RequestBody CreateUserRequest req) {
-        User user = userService.create(req.getEmail(), req.getPassword());
+        User user = userService.create(req.getEmail(), req.getUsername(), req.getPassword());
         return ApiResponse.ok(UserResponse.from(user));
     }
 
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(@RequestBody LoginRequest req) {
-        User user = userService.login(req.getEmail(), req.getPassword());
+        User user = userService.login(req.getAccount(), req.getPassword());
         String token = jwtTokenProvider.generateToken(user.getId(), user.getEmail());
         return ApiResponse.ok(new LoginResponse(token, UserResponse.from(user)));
     }
@@ -65,7 +65,7 @@ public class UserController {
     @PutMapping("/profile")
     public ApiResponse<UserResponse> updateProfile(@RequestBody LoginRequest req) {
         Long userId = SecurityUtil.getCurrentUserId();
-        User user = userService.updateProfile(userId, req.getEmail());
+        User user = userService.updateProfile(userId, req.getAccount());
         return ApiResponse.ok(UserResponse.from(user));
     }
 }

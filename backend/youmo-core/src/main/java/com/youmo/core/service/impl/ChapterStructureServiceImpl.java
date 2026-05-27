@@ -1,12 +1,16 @@
 package com.youmo.core.service.impl;
 
 import com.youmo.common.base.BusinessException;
+import com.youmo.common.entity.ChapterContent;
 import com.youmo.common.entity.ChapterStructure;
 import com.youmo.common.enums.NodeStatus;
+import com.youmo.core.repository.ChapterContentRepository;
 import com.youmo.core.repository.ChapterStructureRepository;
 import com.youmo.core.service.ChapterStructureService;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ChapterStructureServiceImpl implements ChapterStructureService {
 
     private final ChapterStructureRepository chapterStructureRepository;
+    private final ChapterContentRepository chapterContentRepository;
 
     @Override
     @Transactional
@@ -25,8 +30,20 @@ public class ChapterStructureServiceImpl implements ChapterStructureService {
 
     @Override
     public List<ChapterStructure> getTree(Long bookId) {
-        // 返回全书大纲，Controller 层递归组装为树形 JSON
-        return chapterStructureRepository.findByBookId(bookId);
+        List<ChapterStructure> nodes = chapterStructureRepository.findByBookIdOrderBySequenceAsc(bookId);
+        // Populate word counts from latest content
+        List<Long> ids = nodes.stream().map(ChapterStructure::getId).collect(Collectors.toList());
+        if (!ids.isEmpty()) {
+            List<ChapterContent> contents = chapterContentRepository.findLatestByStructureIds(ids);
+            Map<Long, Integer> wcMap = contents.stream()
+                .filter(c -> c.getStructure() != null)
+                .collect(Collectors.toMap(
+                    c -> c.getStructure().getId(),
+                    c -> c.getWordCount() != null ? c.getWordCount() : 0,
+                    (a, b) -> a));
+            nodes.forEach(n -> n.setWordCount(wcMap.getOrDefault(n.getId(), 0)));
+        }
+        return nodes;
     }
 
     @Override

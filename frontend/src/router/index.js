@@ -4,6 +4,11 @@ const routes = [
   {
     path: '/',
     name: 'BookList',
+    component: () => import('@/views/Home.vue'),
+  },
+  {
+    path: '/books',
+    name: 'Books',
     component: () => import('@/views/BookList.vue'),
   },
   {
@@ -32,9 +37,19 @@ const routes = [
     component: () => import('@/views/WorldSetting.vue'),
   },
   {
+    path: '/books/:id/foreshadowings',
+    name: 'ForeshadowingList',
+    component: () => import('@/views/ForeshadowingList.vue'),
+  },
+  {
     path: '/books/:bookId/write/:structureId',
     name: 'ChapterWrite',
     component: () => import('@/views/ChapterWrite.vue'),
+  },
+  {
+    path: '/modules/:type',
+    name: 'ModuleHub',
+    component: () => import('@/views/ModuleHub.vue'),
   },
   {
     path: '/login',
@@ -50,6 +65,11 @@ const routes = [
     path: '/user/center',
     name: 'UserCenter',
     component: () => import('@/views/UserCenter.vue'),
+  },
+  {
+    path: '/feedback',
+    name: 'Feedback',
+    component: () => import('@/views/FeedbackView.vue'),
   },
 ]
 

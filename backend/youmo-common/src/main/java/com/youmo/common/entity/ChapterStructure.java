@@ -12,6 +12,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -61,6 +62,9 @@ public class ChapterStructure extends BaseEntity {
 
     @Column(name = "extra_attributes", columnDefinition = "jsonb")
     private String extraAttributes;
+
+    @Transient
+    private Integer wordCount;
 
     @JsonProperty("parent_id")
     public Long getParentId() {

@@ -24,4 +24,5 @@ public class CreateBookRequest {
     private Integer estimatedWords;
     private String extraAttributes;
     private String negativeConstraints;
+    private String status;
 }

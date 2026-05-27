@@ -13,4 +13,5 @@ public class ContinueRequest {
     private Double presencePenalty = 0.2;
     private Integer maxTokens = 800;
     private Long structureId;
+    private String plan; // approved writing plan for plan-then-execute mode
 }

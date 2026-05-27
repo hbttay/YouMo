@@ -4,7 +4,9 @@ import com.youmo.common.base.BusinessException;
 import com.youmo.common.entity.User;
 import com.youmo.common.enums.UserStatus;
 import com.youmo.core.repository.UserRepository;
+import com.youmo.core.security.LoginRateLimiter;
 import com.youmo.core.service.UserService;
+import com.youmo.core.validation.UsernameValidator;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -17,30 +19,77 @@ public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final LoginRateLimiter rateLimiter;
+
+    private static final String BAD_CREDENTIALS = "账号或密码错误";
 
     @Override
     @Transactional
-    public User create(String email, String rawPassword) {
-        if (userRepository.existsByEmail(email)) {
+    public User create(String email, String username, String rawPassword) {
+        if (email == null || email.isBlank()) {
+            throw new BusinessException(400, "邮箱不能为空");
+        }
+        if (rawPassword == null || rawPassword.length() < 4) {
+            throw new BusinessException(400, "密码至少 4 位");
+        }
+        if (userRepository.existsByEmail(email.strip())) {
             throw new BusinessException(400, "邮箱已被注册");
         }
+
         User user = new User();
-        user.setEmail(email);
+        user.setEmail(email.strip());
+
+        if (username != null && !username.isBlank()) {
+            String err = UsernameValidator.validate(username);
+            if (err != null) throw new BusinessException(400, err);
+            String normalized = UsernameValidator.normalize(username);
+            if (userRepository.existsByUsername(normalized)) {
+                throw new BusinessException(400, "用户名已被使用");
+            }
+            user.setUsername(normalized);
+        }
+
         user.setPasswordHash(passwordEncoder.encode(rawPassword));
         return userRepository.save(user);
     }
 
     @Override
-    public User login(String email, String rawPassword) {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new BusinessException(401, "邮箱或密码错误"));
-        if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
-            throw new BusinessException(401, "邮箱或密码错误");
+    public User login(String account, String rawPassword) {
+        if (account == null || account.isBlank()) {
+            throw new BusinessException(401, BAD_CREDENTIALS);
         }
+
+        String normalized = account.strip();
+        if (rateLimiter.isBlocked(normalized)) {
+            long secs = rateLimiter.remainingSeconds(normalized);
+            long mins = secs / 60;
+            throw new BusinessException(429,
+                "登录尝试过于频繁，请在 " + mins + " 分钟后重试");
+        }
+
+        User user = resolve(normalized);
+        if (user == null || !passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
+            rateLimiter.recordFailure(normalized);
+            int remain = rateLimiter.remainingAttempts(normalized);
+            String hint = remain > 0 ? "（剩余 " + remain + " 次尝试）" : "（账号已临时锁定）";
+            throw new BusinessException(401, BAD_CREDENTIALS + hint);
+        }
+
         if (user.getStatus() != UserStatus.ACTIVE) {
             throw new BusinessException(403, "账号已被禁用");
         }
+
+        rateLimiter.reset(normalized);
         return user;
+    }
+
+    private User resolve(String account) {
+        if (account.contains("@")) {
+            return userRepository.findByEmail(account).orElse(null);
+        }
+        return userRepository.findByUsername(account)
+            .or(() -> userRepository.findByEmail(account))
+            .orElse(null);
     }
 
     @Override

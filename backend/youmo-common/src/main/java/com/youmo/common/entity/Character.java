@@ -45,6 +45,9 @@ public class Character extends BaseEntity {
     @Column(name = "identity", length = 200)
     private String identity;
 
+    @Column(name = "race", length = 50)
+    private String race;
+
     @Column(name = "category_template_id")
     private Long categoryTemplateId;
 

@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, reactive } from 'vue'
 import { useDrafts } from '@/composables/useDrafts'
 
 const props = defineProps({
@@ -11,6 +11,7 @@ const emit = defineEmits(['apply'])
 
 const { drafts, remove, refresh } = useDrafts(props.bookId)
 const open = ref(false)
+const expandedIds = reactive(new Set())
 
 const typeLabels = {
   'character': '角色',
@@ -23,10 +24,26 @@ function filtered() {
   return drafts.value.filter(d => d.type === props.type)
 }
 
+function toggleExpand(id) {
+  if (expandedIds.has(id)) { expandedIds.delete(id) } else { expandedIds.add(id) }
+}
+
 function formatDate(iso) {
   if (!iso) return ''
   const d = new Date(iso)
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const fieldLabels = {
+  name: '姓名', gender: '性别', age_description: '年龄段',
+  appearance: '外貌', origin: '出身', identity: '身份',
+  race: '种族', depth_level: '深度',
+}
+
+function formatDraftValue(key, val) {
+  if (val == null || val === '') return null
+  const label = fieldLabels[key] || key
+  return { label, value: typeof val === 'object' ? JSON.stringify(val) : String(val) }
 }
 
 function handleApply(draft) {
@@ -60,14 +77,25 @@ function handleDelete(id) {
             <div v-if="filtered().length === 0" class="drafts-empty">
               暂无草稿
             </div>
-            <div v-for="d in filtered()" :key="d.id" class="draft-item">
-              <div class="draft-info">
-                <span class="draft-label">{{ d.label }}</span>
-                <span class="draft-time">{{ formatDate(d.createdAt) }}</span>
+            <div v-for="d in filtered()" :key="d.id" class="draft-item" :class="{ expanded: expandedIds.has(d.id) }">
+              <div class="draft-row" @click="toggleExpand(d.id)">
+                <span class="expand-arrow">{{ expandedIds.has(d.id) ? '▾' : '▸' }}</span>
+                <div class="draft-info">
+                  <span class="draft-label">{{ d.label }}</span>
+                  <span class="draft-time">{{ formatDate(d.createdAt) }}</span>
+                </div>
+                <div class="draft-actions" @click.stop>
+                  <button class="btn-sm btn-apply" @click="handleApply(d)">应用</button>
+                  <button class="btn-sm btn-delete" @click="handleDelete(d.id)">删除</button>
+                </div>
               </div>
-              <div class="draft-actions">
-                <button class="btn-sm btn-apply" @click="handleApply(d)">应用</button>
-                <button class="btn-sm btn-delete" @click="handleDelete(d.id)">删除</button>
+              <div v-if="expandedIds.has(d.id)" class="draft-preview">
+                <div v-for="(v, k) in d.data" :key="k">
+                  <template v-if="formatDraftValue(k, v)">
+                    <span class="dp-label">{{ formatDraftValue(k, v).label }}</span>
+                    <span class="dp-value">{{ formatDraftValue(k, v).value }}</span>
+                  </template>
+                </div>
               </div>
             </div>
           </div>
@@ -145,16 +173,32 @@ function handleDelete(id) {
 
 /* ── Draft item ── */
 .draft-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 0;
   border-bottom: 1px solid var(--border-color-light, #f0f0f0);
 }
+.draft-item.expanded {
+  background: #f5f3ff; margin: 0 -24px; padding: 0 24px;
+}
+.draft-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 12px 0; cursor: pointer; user-select: none;
+}
+.expand-arrow { font-size: 10px; color: var(--text-muted); flex-shrink: 0; width: 12px; }
 .draft-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
-.draft-label { font-size: 14px; font-weight: 500; color: var(--text-primary); truncate: ellipsis; }
+.draft-label { font-size: 14px; font-weight: 500; color: var(--text-primary); }
 .draft-time { font-size: 12px; color: #aaa; }
 .draft-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* ── Draft preview ── */
+.draft-preview {
+  padding: 0 18px 14px; display: flex; flex-direction: column; gap: 6px;
+}
+.draft-preview > div {
+  display: flex; gap: 8px; font-size: 13px; line-height: 1.5;
+}
+.dp-label {
+  flex-shrink: 0; min-width: 48px; font-weight: 600; color: var(--text-secondary);
+}
+.dp-value { color: var(--text-primary); }
 .btn-sm {
   padding: 5px 14px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit;
   border: none; transition: background 0.15s;

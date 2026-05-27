@@ -7,19 +7,19 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 
-const form = ref({ email: '', password: '' })
+const form = ref({ account: '', password: '' })
 const error = ref('')
 const submitting = ref(false)
 
 async function handleSubmit() {
   error.value = ''
-  if (!form.value.email || !form.value.password) {
-    error.value = '请填写邮箱和密码'
+  if (!form.value.account || !form.value.password) {
+    error.value = '请填写邮箱或用户名和密码'
     return
   }
   submitting.value = true
   try {
-    await authStore.login(form.value.email, form.value.password)
+    await authStore.login(form.value.account, form.value.password)
     router.push(route.query.redirect || '/')
   } catch (e) {
     error.value = e.response?.data?.message || '登录失败'
@@ -35,8 +35,8 @@ async function handleSubmit() {
       <h1>登录</h1>
       <form @submit.prevent="handleSubmit">
         <div class="form-group">
-          <label>邮箱</label>
-          <input v-model="form.email" type="email" placeholder="you@example.com" autocomplete="email" />
+          <label>邮箱或用户名</label>
+          <input v-model="form.account" type="text" placeholder="you@example.com 或 用户名" autocomplete="username" />
         </div>
         <div class="form-group">
           <label>密码</label>
@@ -68,7 +68,7 @@ async function handleSubmit() {
   max-width: 400px;
   padding: 40px;
   background: var(--bg-surface);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--border-color);
   border-radius: 12px;
 }
 .auth-card h1 {

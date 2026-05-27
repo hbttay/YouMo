@@ -12,7 +12,9 @@ public class CharacterResponse {
     private String appearance;
     private String origin;
     private String identity;
+    private String race;
     private String depthLevel;
+    private String extraAttributes;
 
     public static CharacterResponse from(Character c) {
         CharacterResponse r = new CharacterResponse();
@@ -23,7 +25,9 @@ public class CharacterResponse {
         r.setAppearance(c.getAppearance());
         r.setOrigin(c.getOrigin());
         r.setIdentity(c.getIdentity());
+        r.setRace(c.getRace());
         r.setDepthLevel(c.getDepthLevel().name());
+        r.setExtraAttributes(c.getExtraAttributes());
         return r;
     }
 }

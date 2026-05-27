@@ -8,6 +8,7 @@ import lombok.Data;
 public class UserResponse {
     private Long id;
     private String email;
+    private String username;
     private String status;
     private LocalDateTime createdAt;
 
@@ -15,6 +16,7 @@ public class UserResponse {
         UserResponse r = new UserResponse();
         r.setId(user.getId());
         r.setEmail(user.getEmail());
+        r.setUsername(user.getUsername());
         r.setStatus(user.getStatus().name());
         r.setCreatedAt(user.getCreatedAt());
         return r;

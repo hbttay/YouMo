@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { listCharacters, createCharacter, updateCharacter, deleteCharacter, getBook } from '@/api/book'
 import { randomCharacter, getGenerationStatus } from '@/api/generation'
@@ -8,16 +8,34 @@ import { useDrafts } from '@/composables/useDrafts'
 import ModalConfirm from '@/components/ModalConfirm.vue'
 import RandomPreviewModal from '@/components/RandomPreviewModal.vue'
 import CharacterGraph from '@/components/CharacterGraph.vue'
+import CharacterChat from '@/components/CharacterChat.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import DraftsDrawer from '@/components/DraftsDrawer.vue'
 
 const route = useRoute()
-const bookId = route.params.id
+const bookId = computed(() => route.params.id)
 
 const characters = ref([])
-const expandedId = ref(null)
+const expandedIds = reactive(new Set())
 const viewMode = ref('grid')
 const successMsg = ref('')
+const sortBy = ref('default')
+const randomDepth = ref('')
+
+const depthOrder = { L3: 4, L2: 3, L1: 2, L0: 1 }
+
+const sortedCharacters = computed(() => {
+  const list = [...characters.value]
+  switch (sortBy.value) {
+    case 'depth-desc': return list.sort((a, b) => (depthOrder[b.depth_level] || 0) - (depthOrder[a.depth_level] || 0))
+    case 'depth-asc': return list.sort((a, b) => (depthOrder[a.depth_level] || 0) - (depthOrder[b.depth_level] || 0))
+    case 'name-asc': return list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh'))
+    case 'name-desc': return list.sort((a, b) => (b.name || '').localeCompare(a.name || '', 'zh'))
+    case 'created-desc': return list.sort((a, b) => (b.id || 0) - (a.id || 0))
+    case 'created-asc': return list.sort((a, b) => (a.id || 0) - (b.id || 0))
+    default: return list
+  }
+})
 
 // Slide-over edit panel — single instance, one at a time
 const slide = ref({
@@ -44,14 +62,23 @@ const { execute: deleteExec } = useRequest(deleteCharacter)
 
 const randomGenerating = ref(false)
 const preview = ref({ show: false, type: 'character', data: null })
-const { add: addDraft } = useDrafts(bookId)
+const { add: addDraft } = useDrafts(bookId.value)
 const synopsis = ref('')
 const genStatus = ref({})
 const statusWarning = ref('')
 const bookTitle = ref('')
 
+// Character chat
+const chatVisible = ref(false)
+const chatCharacter = ref(null)
+
+function openChat(c) {
+  chatCharacter.value = c
+  chatVisible.value = true
+}
+
 async function loadSynopsis() {
-  const res = await getBook(bookId)
+  const res = await getBook(bookId.value)
   if (res) {
     synopsis.value = res.data?.core_idea || ''
     bookTitle.value = res.data?.title || ''
@@ -60,7 +87,7 @@ async function loadSynopsis() {
 
 async function checkStatus() {
   try {
-    const s = await getGenerationStatus(bookId)
+    const s = await getGenerationStatus(bookId.value)
     genStatus.value = s
     if (!s.world_setting) statusWarning.value = '建议先生成「世界观设定」和「大纲」，再生成角色。'
     else if (!s.outline) statusWarning.value = '建议先生成「大纲」，再生成角色。'
@@ -76,7 +103,7 @@ async function handleRandomCharacter() {
   randomGenerating.value = true
   error.value = ''
   try {
-    const data = await randomCharacter(bookId, synopsis.value.trim())
+    const data = await randomCharacter(bookId.value, synopsis.value.trim(), randomDepth.value)
     preview.value = { show: true, type: 'character', data }
   } catch (e) {
     error.value = e.message || '生成失败'
@@ -96,6 +123,7 @@ function applyCharacter() {
       appearance: d.appearance || '',
       origin: d.origin || '',
       identity: d.identity || '',
+	      race: d.race || '',
       depth_level: d.depth_level || 'L1',
       relationships: [],
     }
@@ -117,6 +145,7 @@ function handleDraftApply(data) {
     appearance: data.appearance || '',
     origin: data.origin || '',
     identity: data.identity || '',
+	    race: data.race || '',
     depth_level: data.depth_level || 'L1',
     relationships: [],
   }
@@ -176,17 +205,17 @@ function showToast() {
 }
 
 async function fetchCharacters() {
-  const res = await fetchExec(bookId)
+  const res = await fetchExec(bookId.value)
   if (res) characters.value = res.data || []
 }
 
 // ── Card expansion ──────────────────────────────
 function toggleExpand(id) {
-  expandedId.value = expandedId.value === id ? null : id
+  if (expandedIds.has(id)) { expandedIds.delete(id) } else { expandedIds.add(id) }
 }
 
 function isExpanded(id) {
-  return expandedId.value === id
+  return expandedIds.has(id)
 }
 
 // ── Slide-over panel ────────────────────────────
@@ -205,6 +234,7 @@ function openEdit(c) {
     appearance: c.appearance || '',
     origin: c.origin || '',
     identity: c.identity || '',
+	    race: c.race || '',
     depth_level: c.depth_level || 'L1',
     relationships: rels.length ? rels : [],
   }
@@ -228,6 +258,7 @@ function resetForm() {
     age_description: '',
     appearance: '',
     origin: '',
+	    race: '',
     identity: '',
     depth_level: 'L1',
     relationships: [],
@@ -260,9 +291,9 @@ async function handleSlideSubmit() {
 
   let res
   if (slide.value.id) {
-    res = await updateExec(bookId, slide.value.id, payload)
+    res = await updateExec(bookId.value, slide.value.id, payload)
   } else {
-    res = await createExec(bookId, payload)
+    res = await createExec(bookId.value, payload)
   }
   if (res) {
     showToast()
@@ -274,19 +305,24 @@ async function handleSlideSubmit() {
 async function handleDelete(id, name) {
   const confirmed = await showConfirm('确认删除', `确定删除角色「${name}」？此操作不可恢复。`)
   if (!confirmed) return
-  await deleteExec(bookId, id)
-  expandedId.value = null
+  await deleteExec(bookId.value, id)
+  expandedIds.clear()
   await fetchCharacters()
 }
 
 onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
+
+watch(() => route.params.id, (newId) => {
+  if (newId) { fetchCharacters(); loadSynopsis(); checkStatus() }
+})
 </script>
 
 <template>
   <div class="characters-page">
     <!-- Page header -->
     <div class="page-header">
-      <router-link :to="`/books/${bookId}`" class="back-link">&larr; {{ bookTitle || '返回详情' }}</router-link>
+      <router-link v-if="route.query.from === 'hub'" to="/modules/characters" class="back-link">&larr; 返回角色工坊</router-link>
+      <router-link v-else :to="`/books/${bookId}`" class="back-link">&larr; 返回书籍详情</router-link>
     </div>
 
     <!-- Section header -->
@@ -317,6 +353,22 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
             ◉
           </button>
         </div>
+        <select v-model="sortBy" class="sort-select" title="排序方式">
+          <option value="default">默认排序</option>
+          <option value="depth-desc">重要系数 ↓</option>
+          <option value="depth-asc">重要系数 ↑</option>
+          <option value="name-asc">姓名 A→Z</option>
+          <option value="name-desc">姓名 Z→A</option>
+          <option value="created-desc">创建时间 新→旧</option>
+          <option value="created-asc">创建时间 旧→新</option>
+        </select>
+        <select v-model="randomDepth" class="depth-select" title="指定角色等级">
+          <option value="">任意等级</option>
+          <option value="L3">L3 主角</option>
+          <option value="L2">L2 重要配角</option>
+          <option value="L1">L1 配角</option>
+          <option value="L0">L0 背景板</option>
+        </select>
         <button class="btn-random-outline" :disabled="randomGenerating" @click="handleRandomCharacter">
           {{ randomGenerating ? '生成中...' : '随机角色' }}
         </button>
@@ -342,7 +394,7 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
 
     <!-- Graph view -->
     <div v-if="viewMode === 'graph' && characters.length > 0" class="graph-section">
-      <CharacterGraph :characters="characters" @select="(id) => { openEdit(characters.find(c => c.id === id)) }" />
+      <CharacterGraph :characters="sortedCharacters" :book-id="bookId" @select="(id) => { openEdit(characters.find(c => c.id === id)) }" @refresh="fetchExec(bookId)" />
     </div>
 
     <!-- Empty -->
@@ -359,7 +411,7 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
       :class="['character-list', viewMode === 'grid' ? 'grid-view' : 'list-view']"
     >
       <div
-        v-for="c in characters"
+        v-for="c in sortedCharacters"
         :key="c.id"
         :class="['character-card', { 'is-expanded': isExpanded(c.id) }]"
         @click="toggleExpand(c.id)"
@@ -395,6 +447,10 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
             <span class="detail-label">身份</span>
             <span class="detail-value">{{ c.identity }}</span>
           </div>
+          <div v-if="c.race" class="detail-row">
+            <span class="detail-label">种族</span>
+            <span class="detail-value">{{ c.race }}</span>
+          </div>
           <div v-if="c.origin" class="detail-row">
             <span class="detail-label">出身</span>
             <span class="detail-value">{{ c.origin }}</span>
@@ -405,6 +461,7 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
           </div>
 
           <div class="card-actions">
+            <button class="btn-outline" @click.stop="openChat(c)">对话</button>
             <button class="btn-outline" @click.stop="openEdit(c)">编辑</button>
             <button class="btn-outline btn-outline-danger" @click.stop="handleDelete(c.id, c.name)">删除</button>
           </div>
@@ -451,6 +508,10 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
               <div class="form-group">
                 <label>年龄段描述</label>
                 <input v-model="form.age_description" placeholder="如：二十五岁、中年、少年" />
+              </div>
+              <div class="form-group">
+                <label>种族</label>
+                <input v-model="form.race" placeholder="如：人类、精灵、兽人、仙族、魔族..." />
               </div>
               <div class="form-group">
                 <label>身份</label>
@@ -530,6 +591,12 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
       @apply="applyCharacter"
       @draft="draftCharacter"
       @close="closeCharacterPreview"
+    />
+
+    <CharacterChat
+      :character="chatCharacter"
+      :visible="chatVisible"
+      @close="chatVisible = false"
     />
   </div>
 </template>
@@ -776,6 +843,19 @@ onMounted(() => { fetchCharacters(); loadSynopsis(); checkStatus() })
 }
 .btn-random-outline:hover:not(:disabled) { background: #f5f3ff; }
 .btn-random-outline:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.sort-select, .depth-select {
+  padding: 7px 10px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  max-width: 130px;
+}
+.sort-select:focus, .depth-select:focus { outline: none; border-color: #7c3aed; }
 
 .btn-cancel {
   padding: 8px 20px;

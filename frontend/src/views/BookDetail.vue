@@ -1,16 +1,32 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBookStore } from '@/stores/book'
 import { updateBook } from '@/api/book'
 import { STATUS_LABEL, CREATION_LABEL, LENGTH_LABEL } from '@/utils/labels'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import BookStats from '@/components/BookStats.vue'
 
 const route = useRoute()
 const store = useBookStore()
 
 const newTaskText = ref('')
 const taskSaving = ref(false)
+const changingStatus = ref(false)
+
+const BOOK_STATUSES = ['DRAFT', 'SERIALIZING', 'COMPLETED', 'ARCHIVED']
+
+async function changeStatus(newStatus) {
+  if (!store.currentBook || changingStatus.value) return
+  changingStatus.value = true
+  try {
+    const res = await updateBook(route.params.id, { status: newStatus })
+    if (res && res.data) {
+      store.currentBook.status = res.data.status
+    }
+  } catch { /* ignore */ }
+  finally { changingStatus.value = false }
+}
 
 // ── 负向约束 ──
 const newConstraintText = ref('')
@@ -70,7 +86,11 @@ function genId() {
 
 async function saveTasks(newTasks) {
   taskSaving.value = true
-  const payload = { extra_attributes: JSON.stringify({ tasks: newTasks }) }
+  const attrs = typeof store.currentBook.extra_attributes === 'string'
+    ? JSON.parse(store.currentBook.extra_attributes)
+    : (store.currentBook.extra_attributes || {})
+  attrs.tasks = newTasks
+  const payload = { extra_attributes: JSON.stringify(attrs) }
   const res = await updateBook(route.params.id, payload)
   if (res && res.data) {
     store.currentBook.extra_attributes = res.data.extra_attributes
@@ -114,6 +134,10 @@ async function handleExport() {
 onMounted(() => {
   store.fetchBook(route.params.id)
 })
+
+watch(() => route.params.id, (newId) => {
+  if (newId) store.fetchBook(newId)
+})
 </script>
 
 <template>
@@ -124,14 +148,16 @@ onMounted(() => {
 
     <template v-else-if="store.currentBook">
       <div class="page-header">
-        <router-link to="/" class="back-link">&larr; 返回列表</router-link>
+        <router-link to="/books" class="back-link">&larr; 返回列表</router-link>
         <button class="btn-export" @click="handleExport">导出 MD</button>
       </div>
 
       <div class="detail-card">
         <h1>{{ store.currentBook.title }}</h1>
         <div class="meta">
-          <span class="status-tag">{{ STATUS_LABEL[store.currentBook.status] || store.currentBook.status }}</span>
+          <select class="status-select" :value="store.currentBook.status" @change="changeStatus($event.target.value)" :disabled="changingStatus">
+            <option v-for="s in BOOK_STATUSES" :key="s" :value="s">{{ STATUS_LABEL[s] }}</option>
+          </select>
           <span v-if="store.currentBook.creation_mode">{{ CREATION_LABEL[store.currentBook.creation_mode] || store.currentBook.creation_mode }}</span>
           <span v-if="store.currentBook.length_type">{{ LENGTH_LABEL[store.currentBook.length_type] || store.currentBook.length_type }}</span>
         </div>
@@ -153,6 +179,12 @@ onMounted(() => {
           <h3>世界观设定</h3>
           <p>时代、地理、政治等背景</p>
         </router-link>
+      </div>
+
+      <!-- Stats Dashboard -->
+      <div class="stats-section-wrapper">
+        <h2 class="section-title">统计</h2>
+        <BookStats :book-id="route.params.id" />
       </div>
 
       <!-- Task Checklist -->
@@ -282,6 +314,19 @@ onMounted(() => {
   color: var(--text-secondary);
 }
 
+.status-select {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 4px;
+  background: var(--bg-surface-hover);
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+.status-select:hover, .status-select:focus { border-color: var(--color-brand); outline: none; }
+
 .desc {
   color: var(--text-secondary);
   line-height: 1.8;
@@ -318,6 +363,17 @@ onMounted(() => {
 .nav-card p {
   font-size: 13px;
   color: #888;
+}
+
+/* ── Stats ── */
+.stats-section-wrapper {
+  margin-bottom: 24px;
+}
+.section-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 12px;
 }
 
 /* ── Task Checklist ── */

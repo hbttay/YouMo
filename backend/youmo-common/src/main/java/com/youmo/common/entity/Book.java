@@ -81,6 +81,9 @@ public class Book extends BaseEntity {
     @Column(name = "extra_attributes", columnDefinition = "jsonb")
     private String extraAttributes;
 
+    @Column(name = "sequence", nullable = false)
+    private Integer sequence = 0;
+
     @Column(name = "negative_constraints", columnDefinition = "text")
     private String negativeConstraints;
 

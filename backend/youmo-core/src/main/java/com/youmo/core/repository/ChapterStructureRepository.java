@@ -9,7 +9,7 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface ChapterStructureRepository extends JpaRepository<ChapterStructure, Long> {
 
-    List<ChapterStructure> findByBookId(Long bookId);
+    List<ChapterStructure> findByBookIdOrderBySequenceAsc(Long bookId);
 
     List<ChapterStructure> findByParent_Id(Long parentId);
 

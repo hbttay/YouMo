@@ -1,5 +1,7 @@
 package com.youmo.api.controller;
 
+import com.youmo.api.security.SecurityUtil;
+import com.youmo.common.base.BusinessException;
 import com.youmo.common.entity.Book;
 import com.youmo.common.entity.ChapterStructure;
 import com.youmo.common.entity.Character;
@@ -37,8 +39,8 @@ public class ExportController {
 
     @GetMapping("/{id}/export")
     public ResponseEntity<byte[]> exportMd(@PathVariable Long id) {
-        Book book = bookService.getById(id)
-                .orElseThrow(() -> new RuntimeException("书籍不存在"));
+        Long userId = SecurityUtil.getCurrentUserId();
+        Book book = bookService.getOwnedBook(id, userId);
 
         StringBuilder md = new StringBuilder();
         md.append("# ").append(book.getTitle()).append("\n\n");
