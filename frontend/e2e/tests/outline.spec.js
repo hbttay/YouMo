@@ -141,4 +141,70 @@ test.describe('Outline Management', () => {
       }
     }
   })
+
+  test('chapter navigation arrows switch chapters', async ({ page }) => {
+    // Navigate to chapter write page via the write link
+    const writeLink = page.locator('a[href*="/write/"]').first()
+    if (!(await writeLink.isVisible())) return
+    await writeLink.click()
+    await page.waitForTimeout(500)
+
+    // Nav buttons should exist on the write page
+    const navBtns = page.locator('.nav-btns')
+    const hasNav = await navBtns.isVisible({ timeout: 3000 }).catch(() => false)
+    if (!hasNav) return // write page may not have loaded
+
+    // Get current URL
+    const urlBefore = page.url()
+
+    // Click next chapter button if enabled
+    const nextBtn = page.locator('.nav-btn:has-text("▸")')
+    const nextEnabled = !(await nextBtn.isDisabled().catch(() => true))
+    if (nextEnabled) {
+      await nextBtn.click()
+      await page.waitForTimeout(500)
+      const urlAfter = page.url()
+      expect(urlAfter).not.toBe(urlBefore)
+    }
+  })
+
+  test('chapter title has text truncation CSS', async ({ page }) => {
+    // Navigate to chapter write page
+    const writeLink = page.locator('a[href*="/write/"]').first()
+    if (!(await writeLink.isVisible())) return
+    await writeLink.click()
+    await page.waitForTimeout(500)
+
+    const title = page.locator('.chapter-title')
+    if (await title.isVisible()) {
+      const overflow = await title.evaluate(el => getComputedStyle(el).overflow)
+      const whiteSpace = await title.evaluate(el => getComputedStyle(el).whiteSpace)
+      expect(overflow).toBe('hidden')
+      expect(whiteSpace).toBe('nowrap')
+    }
+  })
+
+  test('consistency card has max-height', async ({ page }) => {
+    // Navigate to chapter write page
+    const writeLink = page.locator('a[href*="/write/"]').first()
+    if (!(await writeLink.isVisible())) return
+    await writeLink.click()
+    await page.waitForTimeout(500)
+
+    const writePage = page.locator('.chapter-write')
+    if (!(await writePage.isVisible())) return
+
+    // Trigger consistency check to show the card
+    const checkBtn = page.locator('button:has-text("一致性")')
+    if (await checkBtn.isVisible()) {
+      await checkBtn.click()
+      await page.waitForTimeout(500)
+    }
+
+    const card = page.locator('.consistency-card')
+    if (await card.isVisible({ timeout: 2000 }).catch(() => false)) {
+      const maxH = await card.evaluate(el => getComputedStyle(el).maxHeight)
+      expect(maxH).not.toBe('none')
+    }
+  })
 })

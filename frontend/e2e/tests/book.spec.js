@@ -92,7 +92,7 @@ test.describe('Book Management', () => {
         const statusTag = visibleCards.nth(i).locator('.status-tag')
         if (await statusTag.isVisible()) {
           const text = await statusTag.textContent()
-          expect(text).toBeTruthy()
+          expect(['草稿', '连载中', '已完成', 'DRAFT', 'SERIALIZING', 'COMPLETED']).toContain(text)
         }
       }
     }
@@ -219,9 +219,14 @@ test.describe('Book Management', () => {
 
     await expect(page.locator('.section-title')).toContainText('统计', { timeout: 8000 })
 
-    // BookStats component should render stat cards
-    // Check that at least the stats container exists
+    // BookStats component should render stat cards with numbers
     const statsContainer = page.locator('.stats-section-wrapper')
     await expect(statsContainer).toBeVisible()
+    // At least one number should be present
+    const statValues = statsContainer.locator('[class*="value"], [class*="count"], [class*="number"]')
+    if (await statValues.first().isVisible({ timeout: 2000 }).catch(() => false)) {
+      const firstVal = await statValues.first().textContent()
+      expect(firstVal).toBeTruthy()
+    }
   })
 })

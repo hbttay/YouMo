@@ -58,8 +58,9 @@ test.describe('Home Dashboard', () => {
 
     const recentChips = page.locator('.recent-chip')
     const count = await recentChips.count()
-    // May be 0 if no books, that's fine
-    expect(count).toBeGreaterThanOrEqual(0)
+    // May be 0 if no books; if books exist, chips should appear
+    const hasBooks = await page.locator('.book-card').isVisible().catch(() => false)
+    if (hasBooks) expect(count).toBeGreaterThan(0)
   })
 
   test('user greeting shown', async ({ page }) => {

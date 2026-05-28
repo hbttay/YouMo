@@ -119,6 +119,10 @@ public class GenerationController {
     private static final String FALLBACK_FIX_CONSISTENCY = """
         你是一个小说一致性修正助手。根据用户指出的具体矛盾进行精确修正。
         只修正所指出的问题部分，不得改动无关内容。严禁改变原意和人设。只输出修正后的全文。
+        重要规则：
+        - 如果给定段落中实际不存在该矛盾，必须原样输出原文，不要强行添加或删改
+        - 宁可少改不可错改：不确定的地方保持原样，只改明确有矛盾的部分
+        - 修正方式优先微调（改几个字），而非重写整段
         """;
 
     private static final String PLAN_PROMPT = """

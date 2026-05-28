@@ -136,45 +136,48 @@ export const MOCK = {
   consistencyCheck: {
     success: true,
     data: {
-      issues: [
+      character_issues: [
         {
-          id: 'c1',
-          category: 'character',
-          severity: 'medium',
+          entity: '云汐',
           description: '前文中云汐是"黑发"，本章中写为"银发"',
-          original_text: '一头银发在月光下闪烁',
+          type: 'character',
+          severity: 'medium',
           suggestion: '修改为"一头墨发在月光下闪烁"',
         },
+      ],
+      timeline_issues: [
         {
-          id: 'c2',
-          category: 'timeline',
-          severity: 'high',
+          entity: '时间线',
           description: '前文时间是「午夜子时」，本章写到"夕阳西下"',
-          original_text: '夕阳西下，天色渐暗',
+          type: 'timeline',
+          severity: 'high',
           suggestion: '修改为"月色朦胧，夜色渐深"',
         },
+      ],
+      world_issues: [
         {
-          id: 'c3',
-          category: 'world_setting',
-          severity: 'low',
+          entity: '灵石',
           description: '前文设定灵石为稀有品，本章随手拿出五块',
-          original_text: '她从怀中掏出五块灵石',
+          type: 'world',
+          severity: 'low',
           suggestion: '修改为"她从怀中掏出一块灵石"',
         },
+      ],
+      foreshadowing_issues: [
         {
-          id: 'c4',
-          category: 'foreshadowing',
-          severity: 'medium',
+          entity: '石棺伏笔',
           description: '第三章埋下"石棺与主角血脉相关"的伏笔未呼应',
-          original_text: null,
+          type: 'foreshadowing',
+          severity: 'medium',
           suggestion: '可在此处加入主角看到石棺铭文的血脉反应',
         },
+      ],
+      tone_issues: [
         {
-          id: 'c5',
-          category: 'tone',
-          severity: 'high',
+          entity: '套路化表达',
           description: '本章出现「一股莫名的力量」——AI 套路化表达',
-          original_text: '一股莫名的力量将她推开',
+          type: 'tone',
+          severity: 'high',
           suggestion: '修改为"无形之力将她推开，仿佛密室本身在拒绝她的靠近"',
         },
       ],

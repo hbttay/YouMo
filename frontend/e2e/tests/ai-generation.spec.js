@@ -211,8 +211,8 @@ test.describe('AI Generation (all mocked)', () => {
     // ReviewPanel should be present as part of the page
     const reviewPanel = page.locator('.review-panel')
     const hasReview = await reviewPanel.isVisible({ timeout: 3000 }).catch(() => false)
-    // May be conditionally rendered; verify page itself loaded without error
-    const bodyText = await page.locator('body').textContent()
-    expect(bodyText).toBeTruthy()
+    // May be conditionally rendered; verify page heading or review panel exists
+    const hasHeading = await page.locator('h1').isVisible().catch(() => false)
+    expect(hasReview || hasHeading).toBeTruthy()
   })
 })

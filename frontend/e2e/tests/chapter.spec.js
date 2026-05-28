@@ -26,7 +26,8 @@ test.describe('Chapter Writing', () => {
 
       // If there's content, the textarea should have it
       const textareaValue = await textarea.inputValue()
-      expect(typeof textareaValue).toBe('string')
+      // Textarea should exist and return a value (empty string for new chapter is valid)
+      expect(textareaValue !== undefined && textareaValue !== null).toBeTruthy()
     }
   })
 
@@ -54,9 +55,12 @@ test.describe('Chapter Writing', () => {
       // Type new content
       const testContent = '这是 E2E 自动化测试写入的章节内容。用于验证编辑器数据回写是否正确。'
       await textarea.fill(testContent)
-
-      // Word count should update (at least the element should exist)
       await page.waitForTimeout(500)
+
+      // Word count should update after typing
+      const newCount = await wordCountEl.textContent()
+      const newNum = parseInt(newCount) || 0
+      expect(newNum).toBeGreaterThan(0)
     }
   })
 

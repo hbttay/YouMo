@@ -39,11 +39,9 @@ test.describe('Module Hub', () => {
     await page.waitForTimeout(1000)
 
     // Should render foreshadowing content without crashing
-    const bodyText = await page.locator('body').textContent()
-    expect(bodyText).toBeTruthy()
     // Page heading or content area should be present
     const hasHeading = await page.locator('h1, h2, [class*="title"]').first().isVisible({ timeout: 3000 }).catch(() => false)
-    expect(hasHeading || bodyText.length > 50).toBeTruthy()
+    expect(hasHeading).toBeTruthy()
   })
 
   test('view mode toggle works', async ({ page }) => {
@@ -88,5 +86,6 @@ test.describe('Module Hub', () => {
     const firstAfter = await cards.first().locator('[class*="title"], .book-title, h3').textContent()
     expect(firstBefore).toBeTruthy()
     expect(firstAfter).toBeTruthy()
+    // Verify sort completes without error — first card may or may not change
   })
 })

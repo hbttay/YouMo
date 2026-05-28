@@ -45,9 +45,9 @@ test.describe('Drag and Drop', () => {
 
       // First card should now have a different title (the old second one)
       const titleAfter = await page.locator('.book-card').first().locator('.book-title').textContent()
-      // Both should be strings
-      expect(typeof titleBefore).toBe('string')
-      expect(typeof titleAfter).toBe('string')
+      expect(titleBefore).toBeTruthy()
+      expect(titleAfter).toBeTruthy()
+      expect(titleBefore).not.toBe(titleAfter)
     }
   })
 
@@ -65,8 +65,8 @@ test.describe('Drag and Drop', () => {
       // Check if nodes have drag-related attributes
       const firstNode = treeNodes.first()
       const draggable = await firstNode.getAttribute('draggable')
-      // May be true, or may use a different drag mechanism
-      expect(true).toBeTruthy()
+      // draggable attribute may be 'true', 'false', or null if not using HTML DnD
+      expect(draggable === 'true' || draggable === 'false' || draggable === null).toBeTruthy()
     }
   })
 })

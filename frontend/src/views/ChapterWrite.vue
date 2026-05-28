@@ -11,9 +11,9 @@ import InlinePopup from '@/components/InlinePopup.vue'
 const route = useRoute()
 const router = useRouter()
 const bookId = route.params.bookId
-const structureId = Number(route.params.structureId)
-const title = route.query.title || '未命名章节'
-const nodeType = route.query.node_type || 'SCENE'
+const structureId = ref(Number(route.params.structureId))
+const title = ref(route.query.title || '未命名章节')
+const nodeType = ref(route.query.node_type || 'SCENE')
 
 const loading = ref(false)
 const saving = ref(false)
@@ -54,8 +54,8 @@ function toggleScene(sceneId) {
 
 // ── Save helpers ──
 
-async function saveContent(structureId, body) {
-  const res = await saveChapterContent(structureId, body)
+async function saveContent(nodeId, body) {
+  const res = await saveChapterContent(nodeId, body)
   return res && res.data ? res.data.status : 'DRAFT'
 }
 
@@ -64,7 +64,7 @@ async function saveChapter() {
   saving.value = true
   saved.value = false
   try {
-    contentStatus.value = await saveContent(structureId, {
+    contentStatus.value = await saveContent(structureId.value, {
       content: chapterContent.value,
       word_count: countWords(chapterContent.value),
       source: 'USER_EDITED',
@@ -96,7 +96,7 @@ async function saveSingle() {
   saving.value = true
   saved.value = false
   try {
-    contentStatus.value = await saveContent(structureId, {
+    contentStatus.value = await saveContent(structureId.value, {
       content: content.value,
       word_count: countWords(content.value),
       source: 'USER_EDITED',
@@ -121,8 +121,8 @@ function doSave(status) {
       scenes.value.forEach(s => s.status = 'PUBLISHED')
     }
     // Also mark the outline node as COMPLETED so the progress bar updates
-    if (structureId) {
-      updateOutlineNodeStatus(bookId, structureId, 'COMPLETED').catch(() => {
+    if (structureId.value) {
+      updateOutlineNodeStatus(bookId, structureId.value, 'COMPLETED').catch(() => {
         genError.value = '大纲状态更新失败，进度条可能未变'
       })
     }
@@ -146,6 +146,8 @@ const consistencyRaw = ref(null) // raw report with type groups
 const consistencyTab = ref('all')
 const consistencyChecked = ref(false) // track whether check was performed
 const fixingIdx = ref(-1) // which issue is being AI-fixed
+const fixSuccessMessage = ref('') // toast after fix accepted
+const fixedIssueFingerprints = new Set() // track fixed issues to prevent re-appearance
 
 const consistencyTabs = computed(() => {
   const raw = consistencyRaw.value
@@ -165,8 +167,11 @@ const consistencyTabs = computed(() => {
 })
 
 const filteredConsistencyIssues = computed(() => {
-  if (consistencyTab.value === 'all') return consistencyIssues.value
-  return consistencyIssues.value.filter(i => i.type === consistencyTab.value)
+  let list = consistencyTab.value === 'all' ? consistencyIssues.value : consistencyIssues.value.filter(i => i.type === consistencyTab.value)
+  if (fixedIssueFingerprints.size > 0) {
+    list = list.filter(i => !fixedIssueFingerprints.has(issueFingerprint(i)))
+  }
+  return list
 })
 const temperature = ref(1.2) // AI temperature (0.3-2.0)
 const instructions = ref('') // user's continuation instructions
@@ -235,12 +240,12 @@ async function assembleEmptyContext() {
     }
   } catch (e) { /* offline fallback */ }
 
-  if (title && title !== '未命名章节' && !isGenericTitle(title)) {
-    parts.push('本章标题：「' + title + '」')
+  if (title.value && title.value !== '未命名章节' && !isGenericTitle(title.value)) {
+    parts.push('本章标题：「' + title.value + '」')
   }
 
   // Include previous chapter tail for continuity
-  if (prevNode.value && structureId) {
+  if (prevNode.value && structureId.value) {
     try {
       const prevRes = await getChapterContent(prevNode.value.id)
       if (prevRes?.data?.content) {
@@ -378,7 +383,13 @@ function jumpToIssue(issue) {
   setTimeout(() => { if (genError.value.includes(keywords[0])) genError.value = '' }, 3000)
 }
 
+function issueFingerprint(issue) {
+  return `${issue.entity || ''}::${issue.description || ''}::${issue.type || ''}`.replace(/\s+/g, ' ').trim()
+}
+
 function dismissIssue(idx) {
+  const issue = consistencyIssues.value[idx]
+  if (issue) fixedIssueFingerprints.add(issueFingerprint(issue))
   consistencyIssues.value.splice(idx, 1)
   if (consistencyIssues.value.length === 0) consistencyChecked.value = false
 }
@@ -415,12 +426,12 @@ async function fixConsistencyIssue(issue, idx) {
   const pos = text.indexOf(foundKw)
   if (pos === -1) return
 
-  // extract surrounding context window (~300 chars around keyword)
+  // extract surrounding context window (~500 chars around keyword)
   let start = text.lastIndexOf('\n\n', pos)
   if (start === -1) {
     // no double newline — use single newline or sentence boundary
     start = text.lastIndexOf('\n', pos)
-    if (start === -1 || pos - start > 300) start = Math.max(0, pos - 300)
+    if (start === -1 || pos - start > 500) start = Math.max(0, pos - 500)
     else start = start + 1
   } else {
     start = start + 2
@@ -428,9 +439,9 @@ async function fixConsistencyIssue(issue, idx) {
   let end = text.indexOf('\n\n', pos)
   if (end === -1) {
     end = text.indexOf('\n', pos + 1)
-    if (end === -1 || end - pos > 300) end = Math.min(text.length, pos + 300)
+    if (end === -1 || end - pos > 500) end = Math.min(text.length, pos + 500)
   }
-  if (end - start > 2000) { end = Math.min(text.length, start + 2000) }
+  if (end - start > 3000) { end = Math.min(text.length, start + 3000) }
   const paragraph = text.substring(start, end)
 
   // set textarea selection so acceptInlineResult knows where to apply
@@ -458,7 +469,6 @@ async function fixConsistencyIssue(issue, idx) {
       onChunk(chunk) { inlineResult.value += chunk },
       onDone() {
         inlineLoading.value = false
-        fixingIdx.value = -1
         // position popup near the paragraph, clamped within viewport
         const rect = ta.getBoundingClientRect()
         const lineHeight = parseInt(getComputedStyle(ta).lineHeight) || 20
@@ -470,11 +480,10 @@ async function fixConsistencyIssue(issue, idx) {
       onError(msg) {
         if (msg !== 'AbortError') genError.value = msg
         inlineLoading.value = false
-        fixingIdx.value = -1
       },
     })
   } catch (e) {
-    fixingIdx.value = -1
+    // fixingIdx will be reset by acceptInlineResult or closeInlinePopup
   }
 }
 
@@ -497,7 +506,7 @@ async function handleAiContinue(target) {
   if (planMode.value) {
     planGenerating.value = true
     try {
-      const result = await continuePlan({ bookId, context: ctx, structureId })
+      const result = await continuePlan({ bookId, context: ctx, structureId: structureId.value })
       planPreview.value = result
       planEdited.value = result.plan || ''
     } catch (e) {
@@ -519,11 +528,11 @@ function doStreamContinue(target, ctx, plan) {
   const commonParams = {
     bookId,
     context: ctx,
-    chapterTitle: title !== '未命名章节' ? title : undefined,
+    chapterTitle: title.value !== '未命名章节' ? title.value : undefined,
     temperature: temperature.value,
     instructions: instructions.value || undefined,
     signal: abortController.signal,
-    structureId,
+    structureId: structureId.value,
   }
 
   const callbacks = {
@@ -710,7 +719,7 @@ async function handleReview() {
   try {
     const ctx = scenes.value.length ? chapterContent.value : content.value
     if (!ctx.trim()) { genError.value = '请先写一些正文'; reviewing.value = false; return }
-    const result = await getSuggestions({ bookId, context: ctx, structureId })
+    const result = await getSuggestions({ bookId, context: ctx, structureId: structureId.value })
     suggestions.value = (result.suggestions || []).map(s => ({ ...s, accepted: false, rejected: false }))
     reviewPanelOpen.value = true
   } catch (e) {
@@ -854,7 +863,14 @@ function acceptInlineResult() {
   ta.selectionStart = ta.selectionEnd = start + inlineResult.value.length
   // if this came from consistency fix, remove the fixed issue
   if (fixingIdx.value >= 0) {
+    const fixed = consistencyIssues.value[fixingIdx.value]
+    if (fixed) {
+      fixedIssueFingerprints.add(issueFingerprint(fixed))
+      fixSuccessMessage.value = `已修正「${fixed.entity || fixed.description?.slice(0, 20) || '问题'}」`
+      setTimeout(() => { fixSuccessMessage.value = '' }, 2500)
+    }
     consistencyIssues.value.splice(fixingIdx.value, 1)
+    fixingIdx.value = -1
     if (consistencyIssues.value.length === 0) consistencyChecked.value = false
   }
   closeInlinePopup()
@@ -913,7 +929,7 @@ async function handleAnalyze() {
   analyzing.value = true
   genError.value = ''
   try {
-    const result = await analyzeChapter(structureId)
+    const result = await analyzeChapter(structureId.value)
     // Parse JSONB string fields into objects
     for (const key of ['core_events', 'appearing_characters', 'character_state_changes', 'new_foreshadowings', 'recycled_foreshadowings', 'emotion_curve_point', 'key_scenes', 'world_elements']) {
       if (result[key]) result[key] = parseJsonField(result[key])
@@ -935,7 +951,7 @@ async function handleWritingGuide() {
   guideLoading.value = true
   genError.value = ''
   try {
-    const result = await getWritingGuide({ bookId, context: ctx, structureId })
+    const result = await getWritingGuide({ bookId, context: ctx, structureId: structureId.value })
     guideResult.value = result
     showGuide.value = true
   } catch (e) {
@@ -948,7 +964,7 @@ async function handleWritingGuide() {
 // ── Manual consistency check ─────────────
 async function handleCheckConsistency() {
   if (checkingConsistency.value) return
-  if (!structureId) { genError.value = '未找到章节ID'; return }
+  if (!structureId.value) { genError.value = '未找到章节ID'; return }
   checkingConsistency.value = true
   consistencyCheckProgress.value = 0
   genError.value = ''
@@ -957,7 +973,7 @@ async function handleCheckConsistency() {
     if (consistencyCheckProgress.value < 4) consistencyCheckProgress.value++
   }, 2500)
   try {
-    const res = await checkConsistency(structureId)
+    const res = await checkConsistency(structureId.value)
     clearInterval(_checkProgressTimer)
     consistencyCheckProgress.value = 5
     if (res?.data) {
@@ -990,7 +1006,7 @@ async function submitAnnotation() {
     const ta = inlineSource.value
     const before = ta.value.substring(0, ta.selectionStart)
     const after = ta.value.substring(ta.selectionEnd)
-    await createAnnotation(structureId, {
+    await createAnnotation(structureId.value, {
       annotation_type: 'MANUAL',
       status: 'OPEN',
       char_offset_start: ta.selectionStart,
@@ -1038,7 +1054,7 @@ async function openVersions() {
   viewingVersion.value = null
   versionPreview.value = ''
   try {
-    const res = await getVersionHistory(structureId)
+    const res = await getVersionHistory(structureId.value)
     if (res?.data) versions.value = res.data
   } catch (e) { versions.value = [] }
 }
@@ -1159,7 +1175,7 @@ function buildNavList(outlineData) {
   return result
 }
 
-const navIndex = computed(() => navNodes.value.findIndex(n => n.id === structureId))
+const navIndex = computed(() => navNodes.value.findIndex(n => n.id === structureId.value))
 const prevNode = computed(() => navIndex.value > 0 ? navNodes.value[navIndex.value - 1] : null)
 const nextNode = computed(() => navIndex.value < navNodes.value.length - 1 ? navNodes.value[navIndex.value + 1] : null)
 
@@ -1183,9 +1199,9 @@ async function loadContent() {
       }
     } catch (e) { genError.value = '大纲加载失败，导航和章节列表可能不完整' }
 
-    if (nodeType === 'CHAPTER') {
+    if (nodeType.value === 'CHAPTER') {
       scenes.value = outlineData
-        .filter(n => n.parent_id === structureId && n.node_type === 'SCENE')
+        .filter(n => n.parent_id === structureId.value && n.node_type === 'SCENE')
         .sort((a, b) => a.sequence - b.sequence)
         .map(n => ({
           id: n.id,
@@ -1205,7 +1221,7 @@ async function loadContent() {
         } catch (e) { /* 新场景 */ }
       }
       try {
-        const res = await getChapterContent(structureId)
+        const res = await getChapterContent(structureId.value)
         if (res && res.data) {
           chapterContent.value = res.data.content || ''
           contentStatus.value = res.data.status || 'DRAFT'
@@ -1218,7 +1234,7 @@ async function loadContent() {
       }
     } else {
       try {
-        const res = await getChapterContent(structureId)
+        const res = await getChapterContent(structureId.value)
         if (res && res.data) {
           content.value = res.data.content || ''
           contentStatus.value = res.data.status || 'DRAFT'
@@ -1228,7 +1244,7 @@ async function loadContent() {
     }
     // Check for uncompleted stream buffer
     try {
-      const { buffer } = await getStreamBuffer(structureId)
+      const { buffer } = await getStreamBuffer(structureId.value)
       if (buffer) {
         recovering.value = true
         recoveredText.value = buffer
@@ -1287,7 +1303,12 @@ onMounted(() => {
   document.addEventListener('keydown', exitFocus)
 
 watch(() => route.params.structureId, (newId) => {
-  if (newId) loadContent()
+  if (newId) {
+    structureId.value = Number(newId)
+    title.value = route.query.title || '未命名章节'
+    nodeType.value = route.query.node_type || 'SCENE'
+    loadContent()
+  }
 })
   document.addEventListener('keydown', onKeyNav)
   document.addEventListener('click', closeMenus)
@@ -1468,6 +1489,7 @@ onBeforeRouteLeave((_to, _from, next) => {
 
     <!-- AI error / status -->
     <div v-if="genError" class="gen-error">{{ genError }}</div>
+    <div v-if="fixSuccessMessage" class="fix-success-toast">{{ fixSuccessMessage }}</div>
     <div v-if="planGenerating" class="gen-status">AI 正在生成写作计划<span class="gen-dots">...</span></div>
     <div v-if="generating" class="gen-status">AI 正在续写<span class="gen-dots">...</span></div>
     <div v-if="rewriting" class="gen-status">AI 正在{{ modeOptions.find(m => m.value === rewriteMode)?.label }}<span class="gen-dots">...</span></div>
@@ -1918,6 +1940,10 @@ onBeforeRouteLeave((_to, _from, next) => {
   font-weight: 700;
   color: var(--text-primary);
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 600px;
 }
 .type-label {
   font-size: 11px;
@@ -2131,6 +2157,19 @@ onBeforeRouteLeave((_to, _from, next) => {
   background: var(--bg-error-soft); color: var(--color-danger);
   border: 1px solid var(--border-error-soft); border-radius: 6px;
   font-size: 13px;
+}
+.fix-success-toast {
+  padding: 8px 16px; margin-bottom: 12px;
+  background: #ecfdf5; color: #065f46;
+  border: 1px solid #a7f3d0; border-radius: 6px;
+  font-size: 13px; font-weight: 500;
+  animation: fadeInOut 2.5s ease;
+}
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: translateY(-4px); }
+  15% { opacity: 1; transform: translateY(0); }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
 }
 .gen-status {
   padding: 8px 16px; margin-bottom: 12px;
@@ -2370,6 +2409,8 @@ onBeforeRouteLeave((_to, _from, next) => {
   margin-bottom: 12px; padding: 12px 16px;
   background: #fffbeb; border: 1px solid #fde68a;
   border-radius: 8px;
+  max-height: 420px;
+  overflow-y: auto;
 }
 .consistency-title { font-size: 13px; font-weight: 600; color: #92400e; margin-bottom: 8px; display: flex; align-items: center; gap: 4px; }
 .panel-chevron { font-size: 10px; transition: transform 0.15s; }
@@ -2791,6 +2832,8 @@ onBeforeRouteLeave((_to, _from, next) => {
   box-shadow: 0 6px 24px rgba(0,0,0,0.12);
   min-width: 200px;
   max-width: 380px;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 .inline-popup.dragging { cursor: grabbing; user-select: none; }
 .inline-drag-handle {

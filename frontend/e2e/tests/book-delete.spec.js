@@ -68,9 +68,8 @@ test.describe('Book Lifecycle', () => {
 
     // Export button (might be in a menu or directly visible)
     const exportBtn = page.locator('button:has-text("导出")')
-    // Just verify it exists without clicking (download triggers browser dialog)
     const exists = await exportBtn.isVisible({ timeout: 2000 }).catch(() => false)
-    // Export might not be implemented yet — just check page loads
-    expect(true).toBeTruthy()
+    // Page should at minimum show the book detail
+    expect(await page.locator('.detail-card').isVisible()).toBeTruthy()
   })
 })

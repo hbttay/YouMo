@@ -129,6 +129,7 @@ CLAUDE.md 保持精简。以下内容**只在相关操作时才读**：
 - **Git 提交/推送** → 先读 `.claude/git-guard.md`（保护清单 + 检查流程）
 - **Tab 协作** → 读 `SYNC.md`
 - **想法/灵感** → 读 `THOUGHTS.md`
+- **写测试/改 UI** → 先读 `.claude/testing-rules.md`（测试规范 + CSS 断言清单 + 漏测案例）
 
 高频文件（每次会话必读）：本文件 + `~/.claude/CLAUDE.md`。其他按需。
 - **Git 推送节奏**：每个 Phase 收尾时统一推送一次，不要频繁 push。中间 commit 只留在本地。

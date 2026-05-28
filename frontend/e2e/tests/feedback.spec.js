@@ -18,7 +18,7 @@ test.describe('User Feedback', () => {
     const statsBar = page.locator('.stats-bar, [class*="stats"]')
     const hasStats = await statsBar.isVisible({ timeout: 2000 }).catch(() => false)
 
-    expect(hasBtn || hasStats).toBeTruthy()
+    expect(hasBtn).toBeTruthy()
   })
 
   test('submit feedback form', async ({ page }) => {
@@ -43,7 +43,11 @@ test.describe('User Feedback', () => {
       const sendBtn = page.locator('button:has-text("提交")').first()
       if (await sendBtn.isVisible({ timeout: 2000 })) {
         await sendBtn.click()
-        await page.waitForTimeout(2000)
+        await page.waitForTimeout(500)
+        // After submit, form should close or show success
+        const formAfter = await contentInput.isVisible().catch(() => false)
+        const hasSuccess = await page.locator('.success-msg, .msg-bar.success').isVisible().catch(() => false)
+        expect(!formAfter || hasSuccess).toBeTruthy()
       }
     }
   })
@@ -55,8 +59,7 @@ test.describe('User Feedback', () => {
     // Look for filter selects
     const filterSelects = page.locator('select')
     const count = await filterSelects.count()
-    // May have status, category, severity filters
-    expect(count).toBeGreaterThanOrEqual(0)
+    expect(count).toBeGreaterThan(0)
   })
 
   test('AI analyze feedback triggers mock', async ({ page }) => {
@@ -70,8 +73,12 @@ test.describe('User Feedback', () => {
 
     if (hasAnalyze) {
       await analyzeBtns.first().click()
-      await page.waitForTimeout(2000)
-      // Analysis result should appear (mocked)
+      await page.waitForTimeout(500)
+      // Analysis result should appear — mock returns analyzeFeedback data
+      const analysisResult = page.locator('.analysis-result, .feedback-analysis, [class*="analysis"]')
+      const hasResult = await analysisResult.isVisible({ timeout: 3000 }).catch(() => false)
+      // OR the page may just still have feedback page content
+      expect(hasResult || (await page.locator('h1').isVisible().catch(() => false))).toBeTruthy()
     }
   })
 })
