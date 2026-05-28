@@ -6,15 +6,24 @@ import com.youmo.api.dto.request.ContinueRequest;
 import com.youmo.api.dto.request.RewriteRequest;
 import com.youmo.api.dto.request.SuggestRequest;
 import com.youmo.api.dto.response.SuggestResponse;
+import com.youmo.api.dto.response.BookReportResponse;
+import com.youmo.api.dto.response.WritingGuideResponse;
 import com.youmo.api.security.SecurityUtil;
 import com.youmo.common.base.ApiResponse;
+import com.youmo.common.base.BusinessException;
 import com.youmo.api.service.ConsistencyCheckServiceImpl;
+import com.youmo.core.repository.BookRepository;
+import com.youmo.core.repository.BookStyleProfileRepository;
 import com.youmo.core.repository.CharacterDetailRepository;
+import com.youmo.core.repository.ChapterStructureRepository;
+import com.youmo.core.repository.ChapterSummaryRepository;
+import com.youmo.core.repository.ForeshadowingRepository;
 import com.youmo.core.service.ChapterContentService;
 import com.youmo.core.service.CharacterService;
 import com.youmo.core.service.ConsistencyCheckService;
 import com.youmo.core.service.GenerationLogService;
 import com.youmo.core.service.PromptAssemblyService;
+import com.youmo.core.service.WorldSettingService;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -60,12 +69,31 @@ public class GenerationController {
     private final CharacterService characterService;
     private final CharacterDetailRepository characterDetailRepository;
     private final GenerationLogService generationLogService;
+    private final BookRepository bookRepository;
+    private final ChapterStructureRepository chapterStructureRepository;
+    private final ChapterSummaryRepository chapterSummaryRepository;
+    private final WorldSettingService worldSettingService;
+    private final BookStyleProfileRepository bookStyleProfileRepository;
+    private final ForeshadowingRepository foreshadowingRepository;
     private final Executor executor;
 
     private static final String FALLBACK_CONTINUE = """
         你是一个专业的小说续写助手。根据提供的上下文续写下一段内容。
         核心要求：保持文风一致、多写动作和对话、在关键处截断不留收束句。
         只输出续写内容，不输出解释或评价。
+        """;
+
+    private static final String FALLBACK_FIRST_CHAPTER = """
+        你是一个专业的小说创作助手。根据给定的故事设定和章节信息创作章节正文。
+        核心要求：
+        - 如果提供了本章标题，请围绕标题主题展开情节
+        - 开篇要抓人，用动作或对话自然引入，不要平铺直叙
+        - 每2-4句为一个自然段，段间用空行分隔
+        - 必须使用规范的中文标点符号，句末必须有句号、问号或感叹号
+        - 在一个动作或对话段落结束时止笔，不写收束句——场景未完但句子完整
+        - 自然地展示角色性格和世界观，不要生硬说明
+        - 多写动作和对话，避免大段心理描写或背景介绍
+        只输出创作内容，不输出解释或评价。
         """;
 
     private static final String FALLBACK_POLISH = """
@@ -86,6 +114,11 @@ public class GenerationController {
     private static final String FALLBACK_FIX = """
         你是一个小说校对助手。修正以下段落中的语法错误、错别字、标点符号问题。
         严禁改变原意和人设。保持原文风格和句式结构。只输出修正后的全文。
+        """;
+
+    private static final String FALLBACK_FIX_CONSISTENCY = """
+        你是一个小说一致性修正助手。根据用户指出的具体矛盾进行精确修正。
+        只修正所指出的问题部分，不得改动无关内容。严禁改变原意和人设。只输出修正后的全文。
         """;
 
     private static final String PLAN_PROMPT = """
@@ -129,6 +162,12 @@ public class GenerationController {
                                 CharacterService characterService,
                                 CharacterDetailRepository characterDetailRepository,
                                 GenerationLogService generationLogService,
+                                BookRepository bookRepository,
+                                ChapterStructureRepository chapterStructureRepository,
+                                ChapterSummaryRepository chapterSummaryRepository,
+                                WorldSettingService worldSettingService,
+                                BookStyleProfileRepository bookStyleProfileRepository,
+                                ForeshadowingRepository foreshadowingRepository,
                                 @Qualifier("aiTaskExecutor") Executor executor) {
         this.promptAssemblyService = promptAssemblyService;
         this.promptConfig = promptConfig;
@@ -137,6 +176,12 @@ public class GenerationController {
         this.characterService = characterService;
         this.characterDetailRepository = characterDetailRepository;
         this.generationLogService = generationLogService;
+        this.bookRepository = bookRepository;
+        this.chapterStructureRepository = chapterStructureRepository;
+        this.chapterSummaryRepository = chapterSummaryRepository;
+        this.worldSettingService = worldSettingService;
+        this.bookStyleProfileRepository = bookStyleProfileRepository;
+        this.foreshadowingRepository = foreshadowingRepository;
         this.executor = executor;
     }
 
@@ -153,26 +198,39 @@ public class GenerationController {
         executor.execute(() -> {
             try {
                 String fullContext = req.getContext();
-                if (fullContext == null || fullContext.isBlank()) {
-                    sendError(emitter, "前文内容不能为空");
-                    return;
-                }
+                boolean isFromScratch = (fullContext == null || fullContext.isBlank());
 
                 String systemPrompt;
                 if (req.getBookId() != null) {
+                    String basePrompt = isFromScratch
+                        ? promptConfig.get("continue", FALLBACK_FIRST_CHAPTER)
+                        : promptConfig.get("assemble", FALLBACK_CONTINUE);
                     systemPrompt = promptAssemblyService.buildContinuePrompt(req.getBookId(),
-                        promptConfig.get("assemble", FALLBACK_CONTINUE), fullContext);
+                        basePrompt, fullContext != null ? fullContext : "");
                 } else {
-                    systemPrompt = promptConfig.get("continue", FALLBACK_CONTINUE);
+                    systemPrompt = isFromScratch
+                        ? promptConfig.get("continue", FALLBACK_FIRST_CHAPTER)
+                        : promptConfig.get("continue", FALLBACK_CONTINUE);
                 }
 
-                String context = fullContext.length() > 2000
-                    ? fullContext.substring(fullContext.length() - 2000)
-                    : fullContext;
+                // Inject meaningful chapter title into system prompt
+                String chapterTitle = req.getChapterTitle();
+                if (chapterTitle != null && !chapterTitle.isBlank() && isMeaningfulTitle(chapterTitle)) {
+                    systemPrompt += "\n\n本章标题：「" + chapterTitle + "」——生成的内容应当围绕这一主题展开。";
+                }
 
-                String userMsg = "以下是一段小说正文，请直接从断点处接着往下写：\n\n"
-                    + "---前文开始---\n" + context + "\n---前文结束---\n\n"
-                    + req.getInstructions();
+                String userMsg;
+                if (isFromScratch) {
+                    userMsg = buildFirstChapterMessage(
+                        fullContext != null ? fullContext : "", chapterTitle, req.getInstructions());
+                } else {
+                    String context = fullContext.length() > 2000
+                        ? fullContext.substring(fullContext.length() - 2000)
+                        : fullContext;
+                    userMsg = "以下是一段小说正文，请直接从断点处接着往下写：\n\n"
+                        + "---前文开始---\n" + context + "\n---前文结束---\n\n"
+                        + req.getInstructions();
+                }
 
                 // Stream buffer for recovery on disconnect
                 StringBuilder streamBuffer = new StringBuilder();
@@ -200,8 +258,8 @@ public class GenerationController {
                     chapterContentService.clearStreamBuffer(sid);
                 }
 
-                // Consistency check after generation (5 types, parallel)
-                if (!generated.isBlank() && generated.length() > 100) {
+                // Consistency check after generation (skip for from-scratch — no prior context)
+                if (!isFromScratch && !generated.isBlank() && generated.length() > 100) {
                     try {
                         var report = consistencyCheckService.checkAll(
                             truncate(fullContext, 3000), generated);
@@ -231,6 +289,35 @@ public class GenerationController {
         }
     }
 
+    // Returns true if the chapter title carries semantic meaning (not "第一章", "Chapter 1", etc.)
+    private boolean isMeaningfulTitle(String title) {
+        if (title == null || title.isBlank()) return false;
+        String t = title.trim();
+        if (t.length() < 3) return false;
+        if (t.matches("^第[一二三四五六七八九十百千0-9]+[章节部篇].*$")) return false;
+        if (t.matches("(?i)^chapter\\s*\\d+.*$")) return false;
+        if (t.matches("^\\d+$")) return false;
+        return true;
+    }
+
+    private String buildFirstChapterMessage(String contextBrief, String chapterTitle, String instructions) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("请根据以下信息创作一段小说正文：\n\n");
+        if (contextBrief != null && !contextBrief.isBlank()) {
+            sb.append("---创作素材开始---\n");
+            sb.append(contextBrief);
+            sb.append("\n---创作素材结束---\n\n");
+        }
+        if (chapterTitle != null && !chapterTitle.isBlank()) {
+            sb.append("本章标题：").append(chapterTitle).append("\n\n");
+        }
+        if (instructions != null && !instructions.isBlank()) {
+            sb.append("创作要求：").append(instructions).append("\n\n");
+        }
+        sb.append("请开始创作正文：");
+        return sb.toString();
+    }
+
     // ── Plan-then-Execute: Step 1 — generate writing plan (non-streaming) ──
     @PostMapping(value = "/continue-plan", produces = "application/json;charset=UTF-8")
     public ApiResponse<Map<String, Object>> continuePlan(@RequestBody ContinueRequest req) {
@@ -239,15 +326,19 @@ public class GenerationController {
         boolean success = false;
         try {
             String context = req.getContext();
-            if (context == null || context.isBlank()) {
-                return ApiResponse.fail(400, "前文内容不能为空");
-            }
+            boolean isFromScratch = (context == null || context.isBlank());
 
             String systemPrompt = promptConfig.get("plan", PLAN_PROMPT);
-            String truncated = context.length() > 2000
-                ? context.substring(context.length() - 2000) : context;
-
-            String userMsg = "前文：\n" + truncated + "\n\n请规划下一步写作方向。";
+            String userMsg;
+            if (isFromScratch) {
+                userMsg = buildFirstChapterMessage(
+                    context != null ? context : "", req.getChapterTitle(), req.getInstructions());
+                userMsg += "\n\n请为该章节规划写作方向。";
+            } else {
+                String truncated = context.length() > 2000
+                    ? context.substring(context.length() - 2000) : context;
+                userMsg = "前文：\n" + truncated + "\n\n请规划下一步写作方向。";
+            }
 
             Map<String, Object> body = Map.of(
                 "model", "deepseek-chat",
@@ -307,10 +398,7 @@ public class GenerationController {
         executor.execute(() -> {
             try {
                 String fullContext = req.getContext();
-                if (fullContext == null || fullContext.isBlank()) {
-                    sendError(emitter, "前文内容不能为空");
-                    return;
-                }
+                boolean isFromScratch = (fullContext == null || fullContext.isBlank());
 
                 String plan = req.getPlan();
                 if (plan == null || plan.isBlank()) {
@@ -320,22 +408,38 @@ public class GenerationController {
 
                 String systemPrompt;
                 if (req.getBookId() != null) {
+                    String basePrompt = isFromScratch
+                        ? promptConfig.get("continue-plan-execute", FALLBACK_FIRST_CHAPTER)
+                        : promptConfig.get("assemble", FALLBACK_EXECUTE);
                     systemPrompt = promptAssemblyService.buildContinuePrompt(req.getBookId(),
-                        promptConfig.get("assemble", FALLBACK_EXECUTE), fullContext);
+                        basePrompt, fullContext != null ? fullContext : "");
                 } else {
-                    systemPrompt = promptConfig.get("continue-plan-execute", FALLBACK_EXECUTE);
+                    systemPrompt = isFromScratch
+                        ? promptConfig.get("continue-plan-execute", FALLBACK_FIRST_CHAPTER)
+                        : promptConfig.get("continue-plan-execute", FALLBACK_EXECUTE);
                 }
 
                 // Inject the approved plan as writing guide
                 systemPrompt += "\n\n【批准的写作计划——严格遵循】\n" + plan + "\n";
 
-                String context = fullContext.length() > 2000
-                    ? fullContext.substring(fullContext.length() - 2000)
-                    : fullContext;
+                // Inject meaningful chapter title
+                String chapterTitle = req.getChapterTitle();
+                if (chapterTitle != null && !chapterTitle.isBlank() && isMeaningfulTitle(chapterTitle)) {
+                    systemPrompt += "\n本章标题：「" + chapterTitle + "」——生成的内容应当围绕这一主题展开。\n";
+                }
 
-                String userMsg = "以下是一段小说正文，请按批准的写作计划接着往下写：\n\n"
-                    + "---前文开始---\n" + context + "\n---前文结束---\n\n"
-                    + req.getInstructions();
+                String userMsg;
+                if (isFromScratch) {
+                    userMsg = buildFirstChapterMessage(
+                        fullContext != null ? fullContext : "", chapterTitle, req.getInstructions());
+                } else {
+                    String context = fullContext.length() > 2000
+                        ? fullContext.substring(fullContext.length() - 2000)
+                        : fullContext;
+                    userMsg = "以下是一段小说正文，请按批准的写作计划接着往下写：\n\n"
+                        + "---前文开始---\n" + context + "\n---前文结束---\n\n"
+                        + req.getInstructions();
+                }
 
                 // Stream buffer for recovery on disconnect
                 StringBuilder streamBuffer = new StringBuilder();
@@ -407,6 +511,9 @@ public class GenerationController {
 
                 String userMsg = "请对以下段落进行" + getModeLabel(mode) + "：\n\n"
                     + "---原文开始---\n" + context + "\n---原文结束---";
+                if (req.getInstructions() != null && !req.getInstructions().isBlank()) {
+                    userMsg += "\n\n具体修正指令：\n" + req.getInstructions();
+                }
 
                 streamFromDeepSeek(emitter, rewritePrompt, userMsg,
                     req.getTemperature() != null ? req.getTemperature() : 0.8,
@@ -521,6 +628,306 @@ public class GenerationController {
             generationLogService.logNonStreaming(responseBody, "deepseek-chat",
                 System.currentTimeMillis() - start, req.getStructureId(),
                 "suggest: " + (req.getContext() != null ? req.getContext().substring(0, Math.min(req.getContext().length(), 500)) : ""), success);
+        }
+    }
+
+    // ── Writing guide ──
+
+    private static final String FALLBACK_WRITING_GUIDE = """
+        你是一个资深写作教练。阅读以下章节内容，从创作角度给出3-5条具体可行的改进建议。
+
+        关注维度：
+        - 节奏：情节推进速度是否合适，是否有拖延或仓促
+        - 人物：角色在本章是否有成长或变化，行为是否符合人设
+        - 场景：场景描写是否生动，氛围是否到位，环境是否参与叙事
+        - 对话：对话是否推动剧情，是否符合角色语气
+        - 叙事：视角是否一致，信息揭示时机是否合适，展示vs告知的平衡
+        - 结构：开篇是否抓人，结尾是否有回味，中段是否有信息量
+
+        要求：
+        - 每条建议包含：维度标签、具体问题、改进方案
+        - 语气专业温和，像教练而非批评者
+        - 指出问题后给出可操作的具体建议，不要泛泛而谈
+        - 不适用于本章的维度可以不提
+        - 至少3条，最多5条
+
+        返回JSON数组，不要输出其他内容：
+        [{"dimension":"节奏","issue":"具体问题描述","suggestion":"可操作的改进建议","severity":"high"}]
+        severity 可选值：high=急需改进, medium=建议优化, low=锦上添花
+        """;
+
+    @PostMapping(value = "/writing-guide", produces = "application/json;charset=UTF-8")
+    public ApiResponse<WritingGuideResponse> writingGuide(@RequestBody SuggestRequest req) {
+        long start = System.currentTimeMillis();
+        String responseBody = null;
+        boolean success = false;
+        try {
+            if (req.getContext() == null || req.getContext().isBlank()) {
+                return ApiResponse.fail(400, "原文不能为空");
+            }
+
+            String systemPrompt = promptConfig.get("writing-guide", FALLBACK_WRITING_GUIDE);
+            // Truncate context to ~4000 chars to keep reasonable
+            String ctx = req.getContext().length() > 4000
+                ? req.getContext().substring(0, 4000) : req.getContext();
+
+            String userMsg = "请分析以下章节内容，给出写作建议：\n\n" + ctx;
+
+            Map<String, Object> body = Map.of(
+                "model", "deepseek-chat",
+                "messages", List.of(
+                    Map.of("role", "system", "content", systemPrompt),
+                    Map.of("role", "user", "content", userMsg)
+                ),
+                "temperature", 0.6,
+                "max_tokens", 1500,
+                "stream", false
+            );
+
+            String json = objectMapper.writeValueAsString(body);
+            HttpRequest httpReq = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/v1/chat/completions"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + apiKey)
+                .timeout(Duration.ofSeconds(60))
+                .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                .build();
+
+            HttpResponse<String> resp = httpClient.send(httpReq,
+                HttpResponse.BodyHandlers.ofString());
+            responseBody = resp.body();
+
+            if (resp.statusCode() != 200) {
+                log.error("Writing guide API error {}: {}", resp.statusCode(), responseBody);
+                return ApiResponse.fail(500, "AI 服务返回错误");
+            }
+
+            var root = objectMapper.readTree(responseBody);
+            var choices = root.get("choices");
+            if (choices == null || choices.size() == 0) {
+                return ApiResponse.fail(500, "AI 服务未返回结果");
+            }
+
+            String content = choices.get(0).get("message").get("content").asText();
+            content = content.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
+
+            List<WritingGuideResponse.GuideItem> items = objectMapper.readValue(content,
+                objectMapper.getTypeFactory().constructCollectionType(List.class, WritingGuideResponse.GuideItem.class));
+            WritingGuideResponse result = new WritingGuideResponse();
+            result.setGuides(items);
+            success = true;
+            return ApiResponse.ok(result);
+        } catch (Exception e) {
+            log.error("Writing guide failed", e);
+            return ApiResponse.fail(500, "写作指导失败: " + e.getMessage());
+        } finally {
+            generationLogService.logNonStreaming(responseBody, "deepseek-chat",
+                System.currentTimeMillis() - start, req.getStructureId(),
+                "writing-guide: " + (req.getContext() != null ? req.getContext().substring(0, Math.min(req.getContext().length(), 500)) : ""), success);
+        }
+    }
+
+    // ── Book report ──
+
+    private static final String FALLBACK_BOOK_REPORT = """
+        你是一个资深文学评论家和小说编辑。根据提供的书籍信息、各章摘要、角色数据，生成一份全面的写作报告。
+
+        分析维度：
+        1. 总体评价（150字内）：本书的整体质量、亮点和主要问题
+        2. 分卷分析：每卷的写作质量（优秀/良好/一般/需改进）、节奏把控、亮点和问题
+        3. 人物线完整度：每个角色的出场章节数、弧线完整度（完整/发展中/薄弱）、简述
+        4. 伏笔回收率：已埋伏笔总数、已回收数、回收率评估、未回收伏笔列表
+        5. 改进建议：3-5条按优先级排序的具体建议，每条包含类别（剧情/人物/文笔/结构）和建议内容
+
+        返回JSON，不要输出其他内容：
+        {
+          "overall_assessment": "总体评价",
+          "volume_analyses": [{"title":"卷名","word_count":字数,"quality":"优秀|良好|一般|需改进","pacing":"节奏评价","highlight":"亮点","issue":"问题"}],
+          "character_arcs": {"total_characters":总数,"arcs":[{"name":"角色名","depth_level":"L0-L3","appearance_chapters":出场数,"arc_completeness":"完整|发展中|薄弱","description":"简述"}],"overall_assessment":"人物线总体评价"},
+          "foreshadowing": {"total_planted":埋设数,"recycled":回收数,"recovery_rate":"高|中|低","assessment":"评价","unrecycled_items":["未回收伏笔1","未回收伏笔2"]},
+          "top_advice": [{"category":"剧情|人物|文笔|结构","suggestion":"具体建议","priority":"高|中|低"}]
+        }
+        """;
+
+    @PostMapping(value = "/book-report/{bookId}", produces = "application/json;charset=UTF-8")
+    public ApiResponse<BookReportResponse> bookReport(@PathVariable Long bookId) {
+        long start = System.currentTimeMillis();
+        String responseBody = null;
+        boolean success = false;
+        try {
+            Long userId = SecurityUtil.getCurrentUserId();
+            var book = bookRepository.findById(bookId).orElse(null);
+            if (book == null || book.getOwner() == null
+                    || !book.getOwner().getId().equals(userId)) {
+                throw new BusinessException(403, "无权访问此书");
+            }
+
+            // Collect chapter summaries with titles
+            var structures = chapterStructureRepository.findByBookIdOrderBySequenceAsc(bookId);
+            var summaries = chapterSummaryRepository.findByStructure_Book_Id(bookId);
+            java.util.Map<Long, String> titleById = new java.util.LinkedHashMap<>();
+            java.util.Map<Long, String> volumeTitleById = new java.util.LinkedHashMap<>();
+            for (var s : structures) {
+                titleById.put(s.getId(), s.getTitle() != null ? s.getTitle() : "未命名");
+                if (s.getParent() != null) {
+                    volumeTitleById.put(s.getId(), s.getParent().getTitle() != null ? s.getParent().getTitle() : "未命名卷");
+                }
+            }
+
+            StringBuilder summariesBlock = new StringBuilder();
+            int totalPlanted = 0, totalRecycled = 0;
+            for (var cs : summaries) {
+                Long sid = cs.getStructure().getId();
+                String title = titleById.getOrDefault(sid, "未命名");
+                String volTitle = volumeTitleById.getOrDefault(sid, "");
+                summariesBlock.append("## ").append(title);
+                if (!volTitle.isBlank()) summariesBlock.append(" [").append(volTitle).append("]");
+                summariesBlock.append("\n");
+                if (cs.getNarrativeSummary() != null && !cs.getNarrativeSummary().isBlank()) {
+                    summariesBlock.append("摘要：").append(cs.getNarrativeSummary()).append("\n");
+                }
+                if (cs.getCoreEvents() != null && !cs.getCoreEvents().isBlank()) {
+                    summariesBlock.append("核心事件：").append(cs.getCoreEvents()).append("\n");
+                }
+                if (cs.getKeyScenes() != null && !cs.getKeyScenes().isBlank()) {
+                    summariesBlock.append("关键场景：").append(cs.getKeyScenes()).append("\n");
+                }
+                // Count foreshadowings
+                int planted = countJsonArray(cs.getNewForeshadowings());
+                int recycled = countJsonArray(cs.getRecycledForeshadowings());
+                totalPlanted += planted;
+                totalRecycled += recycled;
+                if (planted > 0) summariesBlock.append("新埋伏笔：").append(planted).append("个\n");
+                if (recycled > 0) summariesBlock.append("回收伏笔：").append(recycled).append("个\n");
+                summariesBlock.append("\n");
+            }
+
+            // Characters
+            var characters = characterService.listByBook(bookId);
+            StringBuilder charsBlock = new StringBuilder();
+            for (var ch : characters) {
+                charsBlock.append("- ").append(ch.getName());
+                if (ch.getDepthLevel() != null) charsBlock.append(" (").append(ch.getDepthLevel().name()).append(")");
+                if (ch.getIdentity() != null) charsBlock.append("，").append(ch.getIdentity());
+                if (ch.getAppearChapters() != null) {
+                    int ac = countJsonArray(ch.getAppearChapters());
+                    charsBlock.append("，出场").append(ac).append("章");
+                }
+                charsBlock.append("\n");
+            }
+
+            // Build user message
+            StringBuilder userMsg = new StringBuilder();
+            userMsg.append("书名：《").append(book.getTitle()).append("》\n");
+            if (book.getCoreIdea() != null && !book.getCoreIdea().isBlank())
+                userMsg.append("核心创意：").append(book.getCoreIdea()).append("\n");
+            if (book.getOneSentence() != null && !book.getOneSentence().isBlank())
+                userMsg.append("一句话梗概：").append(book.getOneSentence()).append("\n");
+            userMsg.append("\n--- 角色列表 ---\n").append(charsBlock);
+            // World setting
+            var worldSetting = worldSettingService.getByBookId(bookId);
+            if (worldSetting.isPresent()) {
+                var w = worldSetting.get();
+                userMsg.append("\n--- 世界观设定 ---\n");
+                if (w.getEra() != null) userMsg.append("时代背景：").append(w.getEra()).append("\n");
+                if (w.getGeography() != null) userMsg.append("地理：").append(w.getGeography()).append("\n");
+                if (w.getPolitics() != null) userMsg.append("政治：").append(w.getPolitics()).append("\n");
+                if (w.getCoreRuleType() != null) userMsg.append("核心规则类型：").append(w.getCoreRuleType()).append("\n");
+                if (w.getCoreRuleSummary() != null) userMsg.append("核心规则：").append(w.getCoreRuleSummary()).append("\n");
+            }
+
+            // Style profile
+            var styleOpt = bookStyleProfileRepository.findByBookId(bookId);
+            if (styleOpt.isPresent()) {
+                var sp = styleOpt.get();
+                userMsg.append("\n--- 文风数据 ---\n");
+                if (sp.getAvgSentenceLength() != null) userMsg.append("平均句长：").append(String.format("%.1f", sp.getAvgSentenceLength())).append(" 字\n");
+                if (sp.getDialogueRatio() != null) userMsg.append("对话占比：").append(String.format("%.0f", sp.getDialogueRatio() * 100)).append("%\n");
+                if (sp.getParagraphStyle() != null) userMsg.append("段落风格：").append(sp.getParagraphStyle()).append("\n");
+                if (sp.getDescriptionActionRatio() != null) userMsg.append("描写/动作比：").append(String.format("%.2f", sp.getDescriptionActionRatio())).append("\n");
+                if (sp.getVocabularyRichness() != null) userMsg.append("词汇丰富度：").append(String.format("%.2f", sp.getVocabularyRichness())).append("\n");
+            }
+
+            // Foreshadowing records
+            var ffs = foreshadowingRepository.findByBookId(bookId);
+            if (!ffs.isEmpty()) {
+                long resolved = ffs.stream().filter(f -> f.getStatus() != null && f.getStatus().name().equals("RESOLVED")).count();
+                userMsg.append("\n--- 伏笔清单 ---\n");
+                userMsg.append("总数：").append(ffs.size()).append("，已回收：").append(resolved).append("\n");
+                for (var f : ffs) {
+                    String desc = f.getDescription() != null ? f.getDescription() : "未命名";
+                    if (desc.length() > 40) desc = desc.substring(0, 40) + "...";
+                    userMsg.append("- ").append(desc);
+                    if (f.getStatus() != null && f.getStatus().name().equals("RESOLVED")) userMsg.append(" ✓已回收");
+                    else userMsg.append(" ✗未回收");
+                    if (f.getImportance() != null) userMsg.append(" [").append(f.getImportance().name()).append("]");
+                    userMsg.append("\n");
+                }
+            }
+
+            userMsg.append("\n--- 各章摘要 ---\n").append(summariesBlock);
+            userMsg.append("\n伏笔统计（来自摘要）：已埋 ").append(totalPlanted).append(" 个，已回收 ").append(totalRecycled).append(" 个\n");
+
+            String systemPrompt = promptConfig.get("book-report", FALLBACK_BOOK_REPORT);
+
+            Map<String, Object> body = Map.of(
+                "model", "deepseek-chat",
+                "messages", List.of(
+                    Map.of("role", "system", "content", systemPrompt),
+                    Map.of("role", "user", "content", userMsg.toString())
+                ),
+                "temperature", 0.5,
+                "max_tokens", 2500,
+                "stream", false
+            );
+
+            String json = objectMapper.writeValueAsString(body);
+            HttpRequest httpReq = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/v1/chat/completions"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + apiKey)
+                .timeout(Duration.ofSeconds(90))
+                .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                .build();
+
+            HttpResponse<String> resp = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofString());
+            responseBody = resp.body();
+
+            if (resp.statusCode() != 200) {
+                log.error("Book report API error {}: {}", resp.statusCode(), responseBody);
+                return ApiResponse.fail(500, "AI 服务返回错误");
+            }
+
+            var root = objectMapper.readTree(responseBody);
+            var choices = root.get("choices");
+            if (choices == null || choices.size() == 0) {
+                return ApiResponse.fail(500, "AI 服务未返回结果");
+            }
+
+            String content = choices.get(0).get("message").get("content").asText();
+            content = content.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
+
+            BookReportResponse result = objectMapper.readValue(content, BookReportResponse.class);
+            success = true;
+            return ApiResponse.ok(result);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Book report failed", e);
+            return ApiResponse.fail(500, "生成报告失败: " + e.getMessage());
+        } finally {
+            generationLogService.logNonStreaming(responseBody, "deepseek-chat",
+                System.currentTimeMillis() - start, null,
+                "book-report: " + bookId, success);
+        }
+    }
+
+    private int countJsonArray(String json) {
+        if (json == null || json.isBlank() || json.equals("null")) return 0;
+        try {
+            return objectMapper.readValue(json, List.class).size();
+        } catch (Exception e) {
+            return 0;
         }
     }
 
@@ -853,6 +1260,7 @@ public class GenerationController {
             case "expand" -> promptConfig.get("expand", FALLBACK_EXPAND);
             case "summarize" -> promptConfig.get("summarize", FALLBACK_SUMMARIZE);
             case "fix" -> promptConfig.get("fix", FALLBACK_FIX);
+            case "fix-consistency" -> promptConfig.get("fix-consistency", FALLBACK_FIX_CONSISTENCY);
             default -> null;
         };
     }
@@ -863,6 +1271,7 @@ public class GenerationController {
             case "expand" -> "扩写";
             case "summarize" -> "缩写";
             case "fix" -> "纠错";
+            case "fix-consistency" -> "一致性修正";
             default -> "处理";
         };
     }

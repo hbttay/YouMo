@@ -64,6 +64,7 @@ public class ChapterStructure extends BaseEntity {
     private String extraAttributes;
 
     @Transient
+    @JsonProperty("word_count")
     private Integer wordCount;
 
     @JsonProperty("parent_id")

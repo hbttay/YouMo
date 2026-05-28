@@ -11,6 +11,7 @@ import com.youmo.core.service.BookService;
 import com.youmo.core.service.CharacterService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/books/{bookId}/characters")
 @RequiredArgsConstructor
@@ -53,7 +55,9 @@ public class CharacterController {
         character.setRace(req.getRace());
         character.setExtraAttributes(req.getExtraAttributes());
         character.setDepthLevel(req.getDepthLevel());
-        return ApiResponse.ok(CharacterResponse.from(characterService.create(character)));
+        Character created = characterService.create(character);
+        log.info("Character created: bookId={}, name={}, id={}", bookId, created.getName(), created.getId());
+        return ApiResponse.ok(CharacterResponse.from(created));
     }
 
     @GetMapping
@@ -85,13 +89,16 @@ public class CharacterController {
         updates.setRace(req.getRace());
         updates.setExtraAttributes(req.getExtraAttributes());
         updates.setDepthLevel(req.getDepthLevel());
-        return ApiResponse.ok(CharacterResponse.from(characterService.update(id, updates)));
+        Character updated = characterService.update(id, updates);
+        log.info("Character updated: bookId={}, id={}, name={}", bookId, id, updated.getName());
+        return ApiResponse.ok(CharacterResponse.from(updated));
     }
 
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long bookId, @PathVariable Long id) {
         assertOwnership(bookId);
         characterService.delete(id);
+        log.info("Character deleted: bookId={}, id={}", bookId, id);
         return ApiResponse.ok();
     }
 }

@@ -14,4 +14,5 @@ public class ContinueRequest {
     private Integer maxTokens = 800;
     private Long structureId;
     private String plan; // approved writing plan for plan-then-execute mode
+    private String chapterTitle; // chapter/scene title for guiding generation direction
 }

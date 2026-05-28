@@ -8,6 +8,7 @@ import com.youmo.common.entity.WorldSetting;
 import com.youmo.core.service.BookService;
 import com.youmo.core.service.WorldSettingService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/books/{bookId}/world-setting")
 @RequiredArgsConstructor
@@ -43,6 +45,8 @@ public class WorldSettingController {
     @PutMapping
     public ApiResponse<WorldSetting> saveOrUpdate(@PathVariable Long bookId, @RequestBody WorldSetting setting) {
         assertOwnership(bookId);
-        return ApiResponse.ok(worldSettingService.saveOrUpdate(bookId, setting));
+        WorldSetting saved = worldSettingService.saveOrUpdate(bookId, setting);
+        log.info("World setting saved: bookId={}", bookId);
+        return ApiResponse.ok(saved);
     }
 }

@@ -130,7 +130,7 @@ a:hover {
   font-family: inherit;
   transition: background 0.15s, color 0.15s;
 }
-.btn-danger:hover:not(:disabled) { background: #fef2f2; color: #b91c1c; }
+.btn-danger:hover:not(:disabled) { background: var(--bg-error-soft); color: var(--color-danger); }
 .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-save {
@@ -145,7 +145,7 @@ a:hover {
   font-family: inherit;
   transition: background 0.15s;
 }
-.btn-save:hover:not(:disabled) { background: #047857; }
+.btn-save:hover:not(:disabled) { background: var(--color-success); }
 .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-sm {
@@ -225,8 +225,8 @@ a:hover {
   margin-bottom: 16px;
   line-height: 1.5;
 }
-.msg-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
-.msg-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.msg-success { background: var(--bg-success-soft); color: var(--color-success); border: 1px solid var(--border-success-soft); }
+.msg-error { background: var(--bg-error-soft); color: var(--color-danger); border: 1px solid var(--border-error-soft); }
 
 /* ── Input error state ── */
 .form-group input.has-error,
@@ -240,7 +240,7 @@ a:hover {
 .loading {
   text-align: center;
   padding: 60px 20px;
-  color: #888;
+  color: var(--text-muted);
 }
 .error {
   text-align: center;

@@ -7,6 +7,8 @@ import com.youmo.common.enums.NodeStatus;
 import com.youmo.core.repository.ChapterContentRepository;
 import com.youmo.core.repository.ChapterStructureRepository;
 import com.youmo.core.service.ChapterStructureService;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,7 +45,38 @@ public class ChapterStructureServiceImpl implements ChapterStructureService {
                     (a, b) -> a));
             nodes.forEach(n -> n.setWordCount(wcMap.getOrDefault(n.getId(), 0)));
         }
+
+        // Aggregate: parent nodes sum their children's word counts (bottom-up)
+        Map<Long, List<ChapterStructure>> childrenByParent = new HashMap<>();
+        for (ChapterStructure n : nodes) {
+            if (n.getParent() != null) {
+                childrenByParent
+                    .computeIfAbsent(n.getParent().getId(), k -> new ArrayList<>())
+                    .add(n);
+            }
+        }
+        // Process deepest first by sorting on parent chain length, then accumulate
+        List<ChapterStructure> sorted = new ArrayList<>(nodes);
+        sorted.sort((a, b) -> Integer.compare(depth(b), depth(a)));
+        for (ChapterStructure n : sorted) {
+            List<ChapterStructure> children = childrenByParent.get(n.getId());
+            if (children != null) {
+                int sum = children.stream().mapToInt(c -> c.getWordCount() != null ? c.getWordCount() : 0).sum();
+                n.setWordCount(sum);
+            }
+        }
+
         return nodes;
+    }
+
+    private int depth(ChapterStructure node) {
+        int d = 0;
+        ChapterStructure p = node.getParent();
+        while (p != null) {
+            d++;
+            p = p.getParent();
+        }
+        return d;
     }
 
     @Override

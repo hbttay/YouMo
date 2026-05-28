@@ -12,6 +12,7 @@ import com.youmo.core.service.ChapterAnnotationService;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/chapters/{structureId}/annotations")
 @RequiredArgsConstructor
@@ -61,7 +63,9 @@ public class ChapterAnnotationController {
             annotation.setContentVersion(latest);
         }
         annotation.setCreatedBy(SecurityUtil.getCurrentUserId());
-        return ApiResponse.ok(annotationService.create(annotation));
+        ChapterContentAnnotation created = annotationService.create(annotation);
+        log.info("Annotation created: structureId={}, id={}", structureId, created.getId());
+        return ApiResponse.ok(created);
     }
 
     @PutMapping("/{id}/resolve")
@@ -70,8 +74,10 @@ public class ChapterAnnotationController {
             @PathVariable Long id,
             @RequestBody Map<String, String> body) {
         assertStructureOwnership(structureId);
-        return ApiResponse.ok(annotationService.resolve(
-            id, body.getOrDefault("resolvedComment", ""), SecurityUtil.getCurrentUserId()));
+        ChapterContentAnnotation resolved = annotationService.resolve(
+            id, body.getOrDefault("resolvedComment", ""), SecurityUtil.getCurrentUserId());
+        log.info("Annotation resolved: structureId={}, id={}", structureId, id);
+        return ApiResponse.ok(resolved);
     }
 
     @PutMapping("/{id}/reopen")
@@ -79,7 +85,9 @@ public class ChapterAnnotationController {
             @PathVariable Long structureId,
             @PathVariable Long id) {
         assertStructureOwnership(structureId);
-        return ApiResponse.ok(annotationService.reopen(id));
+        ChapterContentAnnotation reopened = annotationService.reopen(id);
+        log.info("Annotation reopened: structureId={}, id={}", structureId, id);
+        return ApiResponse.ok(reopened);
     }
 
     @DeleteMapping("/{id}")
@@ -88,6 +96,7 @@ public class ChapterAnnotationController {
             @PathVariable Long id) {
         assertStructureOwnership(structureId);
         annotationService.delete(id);
+        log.info("Annotation deleted: structureId={}, id={}", structureId, id);
         return ApiResponse.ok();
     }
 
@@ -102,6 +111,7 @@ public class ChapterAnnotationController {
         String action = (String) body.getOrDefault("action", "resolve");
         String comment = (String) body.getOrDefault("resolvedComment", "");
         annotationService.batchUpdate(ids, action, comment, SecurityUtil.getCurrentUserId());
+        log.info("Annotation batch update: structureId={}, action={}, count={}", structureId, action, ids.size());
         return ApiResponse.ok();
     }
 }

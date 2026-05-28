@@ -10,6 +10,7 @@ import com.youmo.core.service.CharacterRelationshipService;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/books/{bookId}/character-relationships")
 @RequiredArgsConstructor
@@ -54,7 +56,9 @@ public class CharacterRelationshipController {
         assertOwnership(bookId);
         Book book = bookService.getById(bookId).orElseThrow();
         relationship.setBook(book);
-        return ApiResponse.ok(relationshipService.create(relationship));
+        CharacterRelationship created = relationshipService.create(relationship);
+        log.info("Relationship created: bookId={}, id={}", bookId, created.getId());
+        return ApiResponse.ok(created);
     }
 
     @PutMapping("/{id}")
@@ -62,13 +66,16 @@ public class CharacterRelationshipController {
                                                      @PathVariable Long id,
                                                      @RequestBody CharacterRelationship update) {
         assertOwnership(bookId);
-        return ApiResponse.ok(relationshipService.update(id, update));
+        CharacterRelationship updated = relationshipService.update(id, update);
+        log.info("Relationship updated: bookId={}, id={}", bookId, id);
+        return ApiResponse.ok(updated);
     }
 
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long bookId, @PathVariable Long id) {
         assertOwnership(bookId);
         relationshipService.delete(id);
+        log.info("Relationship deleted: bookId={}, id={}", bookId, id);
         return ApiResponse.ok(null);
     }
 }

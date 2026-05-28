@@ -56,7 +56,7 @@ function authHeaders() {
 /**
  * AI 续写 — SSE streaming
  */
-export async function streamContinue({ bookId, context, instructions, temperature, topP, frequencyPenalty, presencePenalty, maxTokens, signal, structureId }, callbacks) {
+export async function streamContinue({ bookId, context, chapterTitle, instructions, temperature, topP, frequencyPenalty, presencePenalty, maxTokens, signal, structureId }, callbacks) {
   try {
     const resp = await fetch('/api/generation/continue', {
       method: 'POST',
@@ -65,6 +65,7 @@ export async function streamContinue({ bookId, context, instructions, temperatur
       body: JSON.stringify({
         book_id: bookId,
         context,
+        chapter_title: chapterTitle || undefined,
         instructions: instructions || '续写下一段',
         temperature: temperature ?? 1.2,
         top_p: topP ?? 0.95,
@@ -89,7 +90,7 @@ export async function streamContinue({ bookId, context, instructions, temperatur
 /**
  * AI 改写 — 润色/扩写/缩写 SSE streaming
  */
-export async function streamRewrite({ context, mode, temperature, maxTokens, signal }, callbacks) {
+export async function streamRewrite({ context, mode, temperature, maxTokens, instructions, signal }, callbacks) {
   try {
     const resp = await fetch('/api/generation/rewrite', {
       method: 'POST',
@@ -98,6 +99,7 @@ export async function streamRewrite({ context, mode, temperature, maxTokens, sig
       body: JSON.stringify({
         context,
         mode: mode || 'polish',
+        instructions: instructions || '',
         temperature: temperature ?? 0.8,
         max_tokens: maxTokens ?? 1200,
       }),
@@ -157,6 +159,13 @@ export function randomCharacter(bookId, hint, depthLevel) {
   return randomPost(`/api/generation/random/character/${bookId}`, body)
 }
 
+export function characterFission(characterId, similarity, hint) {
+  const body = {}
+  if (similarity != null) body.similarity = String(similarity)
+  if (hint) body.hint = hint
+  return randomPost(`/api/generation/random/character-fission/${characterId}`, body)
+}
+
 export function randomWorldSetting(bookId, hint) {
   return randomPost(`/api/generation/random/world-setting/${bookId}`, hint ? { hint } : {})
 }
@@ -205,6 +214,18 @@ export async function getSuggestions({ bookId, context, structureId }) {
   return data.data
 }
 
+/** AI writing coach — get creative writing advice */
+export async function getWritingGuide({ bookId, context, structureId }) {
+  const resp = await abortableFetch('/api/generation/writing-guide', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ book_id: bookId, context, structure_id: structureId }),
+  }, 60000)
+  const data = await resp.json()
+  if (!resp.ok || !data.success) throw new Error(data.message || '写作指导请求失败')
+  return data.data
+}
+
 // ── Plan-then-Execute ──
 
 /** Step 1: Generate writing plan (non-streaming) */
@@ -246,8 +267,19 @@ export async function optimizeInstructions({ bookId, draft, context }) {
   return data.data
 }
 
+/** Generate comprehensive book writing report */
+export async function getBookReport(bookId) {
+  const resp = await abortableFetch(`/api/generation/book-report/${bookId}`, {
+    method: 'POST',
+    headers: authHeaders(),
+  }, 120000)
+  const data = await resp.json()
+  if (!resp.ok || !data.success) throw new Error(data.message || '生成报告失败')
+  return data.data
+}
+
 /** Step 2: Execute approved plan (SSE streaming) */
-export async function streamContinueExecute({ bookId, context, plan, instructions, temperature, topP, frequencyPenalty, presencePenalty, maxTokens, signal, structureId }, callbacks) {
+export async function streamContinueExecute({ bookId, context, chapterTitle, plan, instructions, temperature, topP, frequencyPenalty, presencePenalty, maxTokens, signal, structureId }, callbacks) {
   try {
     const resp = await fetch('/api/generation/continue-execute', {
       method: 'POST',
@@ -256,6 +288,7 @@ export async function streamContinueExecute({ bookId, context, plan, instruction
       body: JSON.stringify({
         book_id: bookId,
         context,
+        chapter_title: chapterTitle || undefined,
         plan,
         instructions: instructions || '续写下一段',
         temperature: temperature ?? 1.2,

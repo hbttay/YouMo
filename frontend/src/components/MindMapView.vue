@@ -5,55 +5,63 @@ import { NODE_TYPE, NODE_COLOR } from '@/utils/labels'
 const props = defineProps({
   tree: { type: Array, required: true },
   bookId: { type: [String, Number], required: true },
+  collapsedNodes: { type: Set, default: () => new Set() },
 })
 
-const emit = defineEmits(['navigate'])
+const emit = defineEmits(['navigate', 'toggle-collapse'])
 
 // ── Layout engine ──
 
-// Recursively flatten tree into columns (levels)
-// column 0 = volumes, column 1 = chapters, column 2 = scenes
+// Grouped columns: each column is array of groups, each group = { nodes: [...] }
+// Group 0 = first volume's children, group 1 = second volume's children, etc.
 const columns = computed(() => {
-  const cols = [[], [], []]
-  flattenLevel(props.tree, 0, cols)
-  return cols
+  const groups = [[], [], []] // groups[depth] = array of { nodes: [] }
+  flattenLevel(props.tree, 0, groups, 0)
+  return groups
 })
 
-function flattenLevel(nodes, depth, cols) {
+function flattenLevel(nodes, depth, groups) {
   if (depth >= 3) return
+  groups[depth].push([])
+  const currentGroup = groups[depth][groups[depth].length - 1]
   for (const node of nodes) {
-    cols[depth].push(node)
-    if (node.children && node.children.length) {
-      flattenLevel(node.children, depth + 1, cols)
+    currentGroup.push(node)
+    if (node.children && node.children.length && !props.collapsedNodes.has(node.id)) {
+      flattenLevel(node.children, depth + 1, groups)
     }
   }
 }
 
-// Calculate SVG connector lines between parent and its children
+// Branch color palette — assigns distinct color per volume branch
+const branchColors = ['#8b5cf6', '#3b82f6', '#f59e0b', '#10b981', '#ec4899', '#6366f1']
+
+// Calculate SVG connector lines with level info for visual hierarchy
 function getConnections() {
   const lines = []
-  for (const vol of props.tree) {
-    if (vol.children && vol.children.length) {
+  props.tree.forEach((vol, volIdx) => {
+    const branchColor = branchColors[volIdx % branchColors.length]
+    const volCollapsed = props.collapsedNodes.has(vol.id)
+    if (vol.children && vol.children.length && !volCollapsed) {
       for (const ch of vol.children) {
         lines.push({
           from: `n${vol.id}`,
-          fromSide: 'right',
           to: `n${ch.id}`,
-          toSide: 'left',
+          level: 0,
+          stroke: branchColor,
         })
-        if (ch.children && ch.children.length) {
+        if (ch.children && ch.children.length && !props.collapsedNodes.has(ch.id)) {
           for (const sc of ch.children) {
             lines.push({
               from: `n${ch.id}`,
-              fromSide: 'right',
               to: `n${sc.id}`,
-              toSide: 'left',
+              level: 1,
+              stroke: branchColor,
             })
           }
         }
       }
     }
-  }
+  })
   return lines
 }
 
@@ -81,14 +89,11 @@ function recalcLines() {
 
     result.push({
       d: `M${x1},${y1} C${midX},${y1} ${midX},${y2} ${x2},${y2}`,
-      stroke: NODE_COLOR[getNodeTypeByEl(fromEl)] || '#d1d5db',
+      stroke: conn.stroke,
+      level: conn.level,
     })
   }
   svgLines.value = result
-}
-
-function getNodeTypeByEl(el) {
-  return el.dataset?.nodeType || 'SCENE'
 }
 
 let resizeTimer = null
@@ -113,10 +118,16 @@ watch(() => props.tree, () => {
   setTimeout(recalcLines, 150)
 }, { deep: true })
 
+watch(() => props.collapsedNodes, () => {
+  setTimeout(recalcLines, 200)
+}, { deep: true })
+
 // ── Interactions ──
 
 function handleNodeClick(node) {
-  if (node.node_type === 'CHAPTER' || node.node_type === 'SCENE') {
+  if (node.node_type === 'VOLUME' || (node.children && node.children.length > 0)) {
+    emit('toggle-collapse', node.id)
+  } else if (node.node_type === 'CHAPTER' || node.node_type === 'SCENE') {
     emit('navigate', node)
   }
 }
@@ -129,15 +140,24 @@ function getNodeUrl(node) {
 <template>
   <div class="mindmap-wrapper">
     <svg id="mindmap-svg" class="mindmap-svg">
+      <defs>
+        <marker id="arrow-vol" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#c4b5fd" />
+        </marker>
+        <marker id="arrow-ch" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+          <path d="M0,0 L5,2.5 L0,5 Z" fill="#93c5fd" />
+        </marker>
+      </defs>
       <path
         v-for="(line, i) in svgLines"
         :key="i"
         :d="line.d"
         :stroke="line.stroke"
-        stroke-width="2"
+        :stroke-width="line.level === 0 ? 2.5 : 1.6"
         fill="none"
         stroke-linecap="round"
-        stroke-opacity="0.4"
+        :stroke-opacity="line.level === 0 ? 0.55 : 0.4"
+        :marker-end="line.level === 0 ? 'url(#arrow-vol)' : 'url(#arrow-ch)'"
       />
     </svg>
 
@@ -145,79 +165,90 @@ function getNodeUrl(node) {
       <!-- Column 0: 卷 -->
       <div v-if="columns[0].length" class="mindmap-col">
         <div class="col-header" :style="{ color: NODE_COLOR.VOLUME }">卷</div>
-        <div
-          v-for="node in columns[0]"
-          :id="`n${node.id}`"
-          :key="node.id"
-          class="mindmap-node"
-          :data-node-type="node.node_type"
-          :style="{ '--node-color': NODE_COLOR[node.node_type] }"
-          @click="handleNodeClick(node)"
-        >
-          <div class="node-chip">
-            <span class="node-type-tag" :style="{ background: NODE_COLOR[node.node_type] }">
-              {{ NODE_TYPE[node.node_type] }}
-            </span>
-            <span class="node-label">{{ node.title }}</span>
+        <template v-for="(group, gi) in columns[0]" :key="'g0-'+gi">
+          <div
+            v-for="node in group"
+            :id="`n${node.id}`"
+            :key="node.id"
+            class="mindmap-node"
+            :class="{ clickable: node.children && node.children.length }"
+            :data-node-type="node.node_type"
+            :style="{ '--node-color': NODE_COLOR[node.node_type] }"
+            @click="handleNodeClick(node)"
+          >
+            <div class="node-chip">
+              <span v-if="node.children && node.children.length" class="node-collapse-icon">{{ collapsedNodes.has(node.id) ? '▸' : '▾' }}</span>
+              <span class="node-type-tag" :style="{ background: NODE_COLOR[node.node_type] }">
+                {{ NODE_TYPE[node.node_type] }}
+              </span>
+              <span class="node-label">{{ node.title }}</span>
+            </div>
+            <div v-if="node.writing_goal" class="node-goal">{{ node.writing_goal }}</div>
           </div>
-          <div v-if="node.writing_goal" class="node-goal">{{ node.writing_goal }}</div>
-        </div>
+        </template>
       </div>
 
-      <!-- Column 1: 章 -->
+      <!-- Column 1: 章 (grouped by volume) -->
       <div v-if="columns[1].length" class="mindmap-col">
         <div class="col-header" :style="{ color: NODE_COLOR.CHAPTER }">章</div>
-        <div
-          v-for="node in columns[1]"
-          :id="`n${node.id}`"
-          :key="node.id"
-          class="mindmap-node clickable"
-          :data-node-type="node.node_type"
-          :style="{ '--node-color': NODE_COLOR[node.node_type] }"
-          @click="handleNodeClick(node)"
-        >
-          <div class="node-chip">
-            <span class="node-type-tag" :style="{ background: NODE_COLOR[node.node_type] }">
-              {{ NODE_TYPE[node.node_type] }}
-            </span>
-            <span class="node-label">{{ node.title }}</span>
+        <template v-for="(group, gi) in columns[1]" :key="'g1-'+gi">
+          <div v-if="gi > 0 && group.length" class="group-separator"></div>
+          <div
+            v-for="node in group"
+            :id="`n${node.id}`"
+            :key="node.id"
+            class="mindmap-node clickable"
+            :data-node-type="node.node_type"
+            :style="{ '--node-color': NODE_COLOR[node.node_type] }"
+            @click="handleNodeClick(node)"
+          >
+            <div class="node-chip">
+              <span v-if="node.children && node.children.length" class="node-collapse-icon">{{ collapsedNodes.has(node.id) ? '▸' : '▾' }}</span>
+              <span class="node-type-tag" :style="{ background: NODE_COLOR[node.node_type] }">
+                {{ NODE_TYPE[node.node_type] }}
+              </span>
+              <span class="node-label">{{ node.title }}</span>
+            </div>
+            <router-link
+              :to="getNodeUrl(node)"
+              class="node-write-link"
+              @click.stop
+            >写正文</router-link>
           </div>
-          <router-link
-            :to="getNodeUrl(node)"
-            class="node-write-link"
-            @click.stop
-          >写正文</router-link>
-        </div>
+        </template>
       </div>
 
-      <!-- Column 2: 节 -->
+      <!-- Column 2: 节 (grouped by chapter) -->
       <div v-if="columns[2].length" class="mindmap-col">
         <div class="col-header" :style="{ color: NODE_COLOR.SCENE }">节</div>
-        <div
-          v-for="node in columns[2]"
-          :id="`n${node.id}`"
-          :key="node.id"
-          class="mindmap-node clickable"
-          :data-node-type="node.node_type"
-          :style="{ '--node-color': NODE_COLOR[node.node_type] }"
-          @click="handleNodeClick(node)"
-        >
-          <div class="node-chip">
-            <span class="node-type-tag scene-tag" :style="{ background: NODE_COLOR[node.node_type] }">
-              {{ NODE_TYPE[node.node_type] }}
-            </span>
-            <span class="node-label">{{ node.title }}</span>
+        <template v-for="(group, gi) in columns[2]" :key="'g2-'+gi">
+          <div v-if="gi > 0 && group.length" class="group-separator"></div>
+          <div
+            v-for="node in group"
+            :id="`n${node.id}`"
+            :key="node.id"
+            class="mindmap-node clickable"
+            :data-node-type="node.node_type"
+            :style="{ '--node-color': NODE_COLOR[node.node_type] }"
+            @click="handleNodeClick(node)"
+          >
+            <div class="node-chip">
+              <span class="node-type-tag scene-tag" :style="{ background: NODE_COLOR[node.node_type] }">
+                {{ NODE_TYPE[node.node_type] }}
+              </span>
+              <span class="node-label">{{ node.title }}</span>
+            </div>
+            <router-link
+              :to="getNodeUrl(node)"
+              class="node-write-link"
+              @click.stop
+            >写正文</router-link>
           </div>
-          <router-link
-            :to="getNodeUrl(node)"
-            class="node-write-link"
-            @click.stop
-          >写正文</router-link>
-        </div>
+        </template>
       </div>
 
       <!-- Empty -->
-      <div v-if="columns.every(c => !c.length)" class="mindmap-empty">
+      <div v-if="!tree.length" class="mindmap-empty">
         暂无大纲节点，请先在列表视图中创建
       </div>
     </div>
@@ -246,16 +277,16 @@ function getNodeUrl(node) {
   position: relative;
   z-index: 1;
   display: flex;
-  gap: 40px;
+  gap: 48px;
   min-width: max-content;
 }
 
 .mindmap-col {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  min-width: 180px;
-  max-width: 260px;
+  gap: 20px;
+  min-width: 200px;
+  max-width: 280px;
 }
 
 .col-header {
@@ -290,6 +321,14 @@ function getNodeUrl(node) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.node-collapse-icon {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
 }
 
 .node-type-tag {
@@ -341,6 +380,13 @@ function getNodeUrl(node) {
 .node-write-link:hover {
   background: var(--color-brand);
   color: #fff;
+}
+
+.group-separator {
+  height: 16px;
+  border-bottom: 1px dashed var(--border-color);
+  margin-bottom: 4px;
+  opacity: 0.5;
 }
 
 .mindmap-empty {

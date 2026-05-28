@@ -86,6 +86,10 @@ export function getBookStats(bookId) {
   return api.get(`/books/${bookId}/stats`)
 }
 
+export function searchBook(bookId, query) {
+  return api.get(`/books/${bookId}/search`, { params: { q: query } })
+}
+
 // ── Foreshadowing ──
 export function getForeshadowings(bookId) {
   return api.get(`/books/${bookId}/foreshadowings`)
@@ -108,6 +112,10 @@ export function scanForeshadowings(bookId, chapterStructureId) {
 }
 
 // ── Character Relationships ──
+export function getCharacterRelationships(bookId) {
+  return api.get(`/books/${bookId}/character-relationships`)
+}
+
 export function getCharacterRelationshipGraph(bookId) {
   return api.get(`/books/${bookId}/character-relationships/graph`)
 }

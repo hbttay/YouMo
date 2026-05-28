@@ -22,7 +22,9 @@ public class JacksonConfig {
         module.addSerializer(LocalDateTime.class,
                 new LocalDateTimeSerializer(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
         mapper.registerModule(module);
-        mapper.registerModule(new Hibernate6Module());
+        Hibernate6Module h6m = new Hibernate6Module();
+        h6m.disable(Hibernate6Module.Feature.USE_TRANSIENT_ANNOTATION);
+        mapper.registerModule(h6m);
         mapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
         return mapper;
     }

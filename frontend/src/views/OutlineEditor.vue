@@ -8,9 +8,8 @@
     <div class="editor-header">
       <h1>大纲编排</h1>
       <div class="header-actions">
-        <button v-if="tree.length > 0" class="btn btn-sm btn-outline" @click="expandAll">
-          {{ allExpanded ? '折叠全部' : '展开全部' }}
-        </button>
+        <button v-if="tree.length > 0" class="btn btn-sm btn-outline" @click="collapseAll">折叠全部</button>
+        <button v-if="tree.length > 0" class="btn btn-sm btn-outline" @click="expandAll">展开全部</button>
         <div v-if="tree.length > 0" class="view-mode-group">
           <button class="btn btn-sm" :class="{ 'btn-outline': viewMode !== 'tree', 'btn-primary': viewMode === 'tree' }" @click="viewMode = 'tree'">树形</button>
           <button class="btn btn-sm" :class="{ 'btn-outline': viewMode !== 'mindmap', 'btn-primary': viewMode === 'mindmap' }" @click="viewMode = 'mindmap'">导图</button>
@@ -20,6 +19,13 @@
         <button class="btn btn-random" :disabled="outlineGenerating" @click="handleRandomOutline">
           {{ outlineGenerating ? '生成中...' : '随机大纲' }}
         </button>
+        <div class="export-dropdown">
+          <button class="btn btn-sm btn-outline" :disabled="exporting" @click="showExportMenu = !showExportMenu">{{ exporting ? '导出中...' : '📥 导出' }}</button>
+          <div class="dropdown-menu" v-if="showExportMenu" @click.stop>
+            <button class="dropdown-item" @click="exportImage('png'); showExportMenu = false">🖼 导出 PNG</button>
+            <button class="dropdown-item" @click="exportPDF(); showExportMenu = false">📄 导出 PDF</button>
+          </div>
+        </div>
         <button class="btn btn-primary" @click="openCreateForm(null)">+ 新建卷</button>
       </div>
     </div>
@@ -147,7 +153,7 @@
 
     <!-- ========== Mind Map View ========== -->
     <template v-else-if="viewMode === 'mindmap'">
-      <MindMapView :tree="tree" :book-id="bookId" @navigate="handleMindMapNavigate" />
+      <MindMapView :tree="tree" :book-id="bookId" :collapsed-nodes="collapsedNodes" @navigate="handleMindMapNavigate" @toggle-collapse="toggleCollapse" />
     </template>
 
     <!-- ========== Tree ========== -->
@@ -158,7 +164,7 @@
         <div
           class="node-row node-volume"
           :class="[dragOverClass(node), { 'is-editing': editingId === node.id, collapsed: collapsedNodes.has(node.id), 'is-dragging': dragNode?.id === node.id, 'is-focused': lastFocusedId === node.id }]"
-          @click="canHaveChildren(node.node_type) && toggleCollapse(node.id)"
+          @click="handleRowClick(node)"
           draggable="true"
           @dragstart="handleDragStart(node)"
           @dragover="handleDragOver($event, node)"
@@ -236,7 +242,7 @@
             <div
               class="node-row node-chapter"
               :class="[dragOverClass(child), { 'is-editing': editingId === child.id, collapsed: collapsedNodes.has(child.id), 'is-dragging': dragNode?.id === child.id, 'is-focused': lastFocusedId === child.id }]"
-              @click="canHaveChildren(child.node_type) && toggleCollapse(child.id)"
+              @click="handleRowClick(child)"
               draggable="true"
               @dragstart="handleDragStart(child)"
               @dragover="handleDragOver($event, child)"
@@ -319,6 +325,7 @@
                   class="node-row"
                   :class="[dragOverClass(grand), { 'is-editing': editingId === grand.id, 'is-dragging': dragNode?.id === grand.id }]"
                   draggable="true"
+                  @click="handleRowClick(grand)"
                   @dragstart="handleDragStart(grand)"
                   @dragover="handleDragOver($event, grand)"
                   @dragleave="handleDragLeave"
@@ -379,12 +386,13 @@
     </div>
     </template>
 
-    <!-- ========== Table View ========== -->
+    <!-- ========== Table View (hierarchical) ========== -->
     <template v-else-if="viewMode === 'table'">
       <div class="table-toolbar">
         <div class="table-filters">
           <select v-model="tableFilterType" class="table-filter-select">
             <option value="">全部类型</option>
+            <option value="VOLUME">卷</option>
             <option value="CHAPTER">章</option>
             <option value="SCENE">节</option>
           </select>
@@ -395,42 +403,62 @@
             <option value="REVISION">修订中</option>
             <option value="COMPLETED">已完成</option>
           </select>
-          <span class="table-count">{{ filteredFlatNodes.length }} 项</span>
+          <span class="table-count">{{ tableRows.length }} 项</span>
         </div>
       </div>
-      <div class="table-container" v-if="filteredFlatNodes.length">
+      <div class="table-container" v-if="tableRows.length">
         <table class="outline-table">
           <thead>
             <tr>
-              <th class="col-seq" @click="toggleSort('sequence')"># <span class="sort-arrow">{{ tableSortBy === 'sequence' ? (tableSortDir === 'asc' ? '↑' : '↓') : '' }}</span></th>
-              <th class="col-type">类型</th>
               <th class="col-title" @click="toggleSort('title')">标题 <span class="sort-arrow">{{ tableSortBy === 'title' ? (tableSortDir === 'asc' ? '↑' : '↓') : '' }}</span></th>
-              <th class="col-parent">所属卷</th>
+              <th class="col-type">类型</th>
               <th class="col-words" @click="toggleSort('words')">字数 <span class="sort-arrow">{{ tableSortBy === 'words' ? (tableSortDir === 'asc' ? '↑' : '↓') : '' }}</span></th>
               <th class="col-status" @click="toggleSort('status')">状态 <span class="sort-arrow">{{ tableSortBy === 'status' ? (tableSortDir === 'asc' ? '↑' : '↓') : '' }}</span></th>
               <th class="col-action">操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="node in filteredFlatNodes" :key="node.id" :class="{ 'row-completed': node.status === 'COMPLETED' }">
-              <td class="col-seq">{{ node.sequence }}</td>
-              <td class="col-type">
-                <span class="type-badge" :style="{ background: getTypeColor(node.node_type) + '18', color: getTypeColor(node.node_type) }">{{ getTypeLabel(node.node_type) }}</span>
-              </td>
-              <td class="col-title">
-                <router-link :to="`/books/${bookId}/write/${node.id}?title=${encodeURIComponent(node.title)}&node_type=${node.node_type}`" class="table-title-link">{{ node.title }}</router-link>
-              </td>
-              <td class="col-parent">{{ node._parentTitle || '-' }}</td>
-              <td class="col-words">{{ node.word_count || 0 }} 字</td>
-              <td class="col-status"><span class="status-dot" :style="{ background: getStatusColor(node.status) }" :title="getStatusLabel(node.status)"></span> {{ getStatusLabel(node.status) }}</td>
-              <td class="col-action">
-                <router-link :to="`/books/${bookId}/write/${node.id}?title=${encodeURIComponent(node.title)}&node_type=${node.node_type}`" class="btn-action btn-write">写正文</router-link>
-              </td>
-            </tr>
+            <template v-for="row in tableRows" :key="row.id">
+              <tr
+                v-if="row.node_type === 'VOLUME'"
+                class="row-volume"
+                @click="toggleCollapse(row.id)"
+              >
+                <td class="col-title" colspan="1">
+                  <span class="volume-arrow">{{ collapsedNodes.has(row.id) ? '▸' : '▾' }}</span>
+                  <span class="volume-title">{{ row.title }}</span>
+                  <span class="volume-child-count">{{ row._childCount || 0 }} 个子节点</span>
+                </td>
+                <td class="col-type">
+                  <span class="type-badge" :style="{ background: getTypeColor('VOLUME') + '18', color: getTypeColor('VOLUME') }">卷</span>
+                </td>
+                <td class="col-words">{{ row.word_count || 0 }} 字</td>
+                <td class="col-status"></td>
+                <td class="col-action">
+                  <button class="btn-action" title="添加章" @click.stop="openCreateForm(row.id)">+ 章</button>
+                </td>
+              </tr>
+              <tr
+                v-else
+                :class="{ 'row-completed': row.status === 'COMPLETED', 'row-chapter': row.node_type === 'CHAPTER', 'row-scene': row.node_type === 'SCENE' }"
+              >
+                <td class="col-title" :style="{ paddingLeft: row.node_type === 'SCENE' ? '48px' : '24px' }">
+                  <router-link :to="`/books/${bookId}/write/${row.id}?title=${encodeURIComponent(row.title)}&node_type=${row.node_type}`" class="table-title-link">{{ row.title }}</router-link>
+                </td>
+                <td class="col-type">
+                  <span class="type-badge" :style="{ background: getTypeColor(row.node_type) + '18', color: getTypeColor(row.node_type) }">{{ getTypeLabel(row.node_type) }}</span>
+                </td>
+                <td class="col-words">{{ row.word_count || 0 }} 字</td>
+                <td class="col-status"><span class="status-dot" :style="{ background: getStatusColor(row.status) }" :title="getStatusLabel(row.status)"></span> {{ getStatusLabel(row.status) }}</td>
+                <td class="col-action">
+                  <router-link :to="`/books/${bookId}/write/${row.id}?title=${encodeURIComponent(row.title)}&node_type=${row.node_type}`" class="btn-action btn-write">写正文</router-link>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
-      <div v-else class="table-empty">没有匹配的章节</div>
+      <div v-else class="table-empty">没有匹配的节点</div>
       <div v-if="tree.length > 0" class="bottom-add-bar">
         <button class="btn btn-add-volume" @click="openCreateForm(null)">+ 新建卷</button>
       </div>
@@ -465,6 +493,8 @@ import { getOutline, createOutlineNode, updateOutlineNode, updateOutlineNodeStat
 import { randomOutline, randomOutlineExpand, getGenerationStatus } from '@/api/generation'
 import { useRequest } from '@/composables/useRequest'
 import { useDrafts } from '@/composables/useDrafts'
+import html2canvas from 'html2canvas'
+import jsPDF from 'jspdf'
 import ModalConfirm from '@/components/ModalConfirm.vue'
 import RandomPreviewModal from '@/components/RandomPreviewModal.vue'
 import MindMapView from '@/components/MindMapView.vue'
@@ -533,6 +563,8 @@ const errorMsg = ref('')
 let successTimer = null
 
 const outlineGenerating = ref(false)
+const exporting = ref(false)
+const showExportMenu = ref(false)
 
 const viewMode = ref('tree') // 'tree' | 'mindmap' | 'table'
 const tableSortBy = ref('sequence')
@@ -540,37 +572,110 @@ const tableSortDir = ref('asc')
 const tableFilterType = ref('')
 const tableFilterStatus = ref('')
 
-// Flatten tree to array of writable nodes (CHAPTER/SCENE) with parent info
-const flatNodes = computed(() => {
+// Hierarchical table rows: VOLUME headers + CHAPTER/SCENE children, respects collapse & filters
+const tableRows = computed(() => {
   const result = []
   let order = 0
-  function walk(nodes, parentTitle) {
+  const filterType = tableFilterType.value
+  const filterStatus = tableFilterStatus.value
+
+  function sumWords(children) {
+    let total = 0
+    for (const c of children) {
+      total += c.word_count || 0
+      if (c.children) total += sumWords(c.children)
+    }
+    return total
+  }
+
+  function hasMatch(children, ft, fs) {
+    for (const c of children) {
+      const mt = !ft || c.node_type === ft
+      const ms = !fs || c.status === fs
+      if (mt && ms) return true
+      if (c.children && hasMatch(c.children, ft, fs)) return true
+    }
+    return false
+  }
+
+  function walk(nodes, parentId, depth) {
     for (const n of nodes) {
-      if (n.node_type === 'CHAPTER' || n.node_type === 'SCENE') {
-        result.push({ ...n, _parentTitle: parentTitle, _treeOrder: order++ })
+      const matchesType = !filterType || n.node_type === filterType
+      const matchesStatus = !filterStatus || n.status === filterStatus
+
+      if (n.node_type === 'VOLUME') {
+        const childCount = n.children ? n.children.length : 0
+        n._childCount = childCount
+        n.word_count = n.children ? sumWords(n.children) : 0
+        n._treeOrder = order++
+        n._depth = depth
+
+        const hasMatchingDescendants = (!filterType && !filterStatus) ? false
+          : (n.children && hasMatch(n.children, filterType, filterStatus))
+
+        if (!filterType && !filterStatus) {
+          result.push(n)
+        } else if (n.node_type === filterType || (n.node_type !== filterType && hasMatchingDescendants)) {
+          result.push(n)
+        }
+
+        if (!collapsedNodes.value.has(n.id) && n.children) {
+          walk(n.children, n.id, depth + 1)
+        }
+      } else {
+        if (matchesType && matchesStatus) {
+          n._parentId = parentId
+          n._treeOrder = order++
+          n._depth = depth
+          result.push(n)
+        }
+        if (n.children) walk(n.children, parentId, depth + 1)
       }
-      if (n.children) walk(n.children, n.node_type === 'VOLUME' ? n.title : parentTitle)
     }
   }
-  walk(tree.value, '')
-  return result
-})
 
-const filteredFlatNodes = computed(() => {
-  let list = [...flatNodes.value]
-  if (tableFilterType.value) list = list.filter(n => n.node_type === tableFilterType.value)
-  if (tableFilterStatus.value) list = list.filter(n => n.status === tableFilterStatus.value)
-  const dir = tableSortDir.value === 'asc' ? 1 : -1
-  list.sort((a, b) => {
-    switch (tableSortBy.value) {
-      case 'title': return dir * a.title.localeCompare(b.title, 'zh')
-      case 'words': return dir * ((a.word_count || 0) - (b.word_count || 0))
-      case 'status': return dir * a.status.localeCompare(b.status)
-      case 'sequence': return dir * (a.sequence - b.sequence)
-      default: return dir * (a._treeOrder - b._treeOrder)
+  walk(tree.value, null, 0)
+
+  // Sort within groups (keep VOLUME rows anchored)
+  if (tableSortBy.value !== 'sequence') {
+    const groups = []
+    let cur = { volume: null, children: [] }
+    for (const row of result) {
+      if (row.node_type === 'VOLUME') {
+        if (cur.volume || cur.children.length) groups.push(cur)
+        cur = { volume: row, children: [] }
+      } else {
+        cur.children.push(row)
+      }
     }
-  })
-  return list
+    if (cur.volume || cur.children.length) groups.push(cur)
+
+    const dir = tableSortDir.value === 'asc' ? 1 : -1
+    for (const g of groups) {
+      g.children.sort((a, b) => {
+        switch (tableSortBy.value) {
+          case 'title': return dir * a.title.localeCompare(b.title, 'zh')
+          case 'words': return dir * ((a.word_count || 0) - (b.word_count || 0))
+          case 'status': return dir * a.status.localeCompare(b.status)
+          default: return dir * (a._treeOrder - b._treeOrder)
+        }
+      })
+    }
+
+    groups.sort((a, b) => {
+      if (!a.volume && !b.volume) return 0
+      if (!a.volume) return 1; if (!b.volume) return -1
+      return dir * ((a.volume._treeOrder || 0) - (b.volume._treeOrder || 0))
+    })
+
+    result.length = 0
+    for (const g of groups) {
+      if (g.volume) result.push(g.volume)
+      result.push(...g.children)
+    }
+  }
+
+  return result
 })
 
 function toggleSort(column) {
@@ -726,6 +831,14 @@ function saveCollapsed() {
 
 const allExpanded = computed(() => collapsedNodes.value.size === 0)
 
+function handleRowClick(node) {
+  if (canHaveChildren(node.node_type) && node.children && node.children.length > 0) {
+    toggleCollapse(node.id)
+  } else {
+    router.push(`/books/${bookId}/write/${node.id}?title=${encodeURIComponent(node.title)}&node_type=${node.node_type}`)
+  }
+}
+
 function handleMindMapNavigate(node) {
   setFocused(node)
 }
@@ -741,11 +854,15 @@ function toggleCollapse(nodeId) {
 function expandAll() {
   if (collapsedNodes.value.size) {
     collapsedNodes.value = new Set()
-  } else {
-    const parentIds = new Set(nodes.value.map(n => n.parent_id).filter(Boolean))
-    const toAdd = nodes.value.filter(n => canHaveChildren(n.node_type) && parentIds.has(n.id)).map(n => n.id)
-    collapsedNodes.value = new Set(toAdd)
   }
+  saveCollapsed()
+}
+
+function collapseAll() {
+  const toAdd = nodes.value
+    .filter(n => canHaveChildren(n.node_type) && n.children && n.children.length)
+    .map(n => n.id)
+  collapsedNodes.value = new Set(toAdd)
   saveCollapsed()
 }
 
@@ -1070,6 +1187,46 @@ function childLabel(type) {
   return type === 'VOLUME' ? '添加章' : '添加节'
 }
 
+// ── Export ──────────────────────────
+
+async function exportImage(format = 'png') {
+  const el = document.querySelector('.outline-editor')
+  if (!el) return
+  exporting.value = true
+  try {
+    const canvas = await html2canvas(el, { backgroundColor: '#ffffff', scale: 2 })
+    const link = document.createElement('a')
+    link.download = `大纲_${new Date().toISOString().slice(0, 10)}.${format}`
+    link.href = canvas.toDataURL(`image/${format}`)
+    link.click()
+  } catch (e) {
+    errorMsg.value = '导出失败: ' + e.message
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function exportPDF() {
+  const el = document.querySelector('.outline-editor')
+  if (!el) return
+  exporting.value = true
+  try {
+    const canvas = await html2canvas(el, { backgroundColor: '#ffffff', scale: 2 })
+    const imgData = canvas.toDataURL('image/png')
+    const pdf = new jsPDF({
+      orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+      unit: 'px',
+      format: [canvas.width, canvas.height],
+    })
+    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height)
+    pdf.save(`大纲_${new Date().toISOString().slice(0, 10)}.pdf`)
+  } catch (e) {
+    errorMsg.value = '导出失败: ' + e.message
+  } finally {
+    exporting.value = false
+  }
+}
+
 onMounted(() => { loadSynopsis(); fetchOutline(); checkStatus() })
 
 watch(() => route.params.id, (newId) => {
@@ -1109,6 +1266,21 @@ watch(() => route.params.id, (newId) => {
   color: #111827;
 }
 .header-actions { display: flex; align-items: center; gap: 8px; }
+.export-dropdown { position: relative; }
+.export-dropdown .dropdown-menu {
+  position: absolute; top: 100%; right: 0; z-index: 200;
+  min-width: 140px; margin-top: 4px;
+  background: var(--bg-surface); border: 1px solid var(--border-color);
+  border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  padding: 4px;
+}
+.export-dropdown .dropdown-item {
+  display: block; width: 100%; padding: 8px 12px;
+  font-size: 13px; font-family: inherit;
+  background: none; border: none; border-radius: 6px;
+  text-align: left; cursor: pointer; color: var(--text-primary);
+}
+.export-dropdown .dropdown-item:hover { background: var(--bg-surface-hover); }
 .btn-outline {
   padding: 7px 14px; font-size: 12px; font-weight: 500;
   background: var(--bg-surface); color: var(--text-secondary); border: 1px solid var(--border-input); border-radius: 6px;
@@ -1449,6 +1621,20 @@ watch(() => route.params.id, (newId) => {
 .outline-table .type-badge {
   font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 500;
 }
+
+/* Hierarchical table rows */
+.row-volume {
+  background: var(--bg-surface-hover);
+  cursor: pointer;
+  user-select: none;
+}
+.row-volume:hover { background: #ede9fe; }
+.row-volume td { padding-top: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color); }
+.volume-arrow { font-size: 10px; color: var(--text-muted); margin-right: 6px; }
+.volume-title { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.volume-child-count { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
+.row-chapter td { padding-top: 8px; padding-bottom: 6px; }
+.row-scene td { padding-top: 6px; padding-bottom: 4px; font-size: 13px; }
 
 /* ── Responsive ── */
 @media (max-width: 768px) {

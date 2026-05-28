@@ -332,4 +332,83 @@ public class RandomController {
             return ResponseEntity.status(500).body(Map.of("message", "生成失败: " + e.getMessage()));
         }
     }
+
+    // ── Character fission ──
+
+    private static final String FALLBACK_FISSION = """
+        你是一个小说角色生成器。根据一个已有角色，衍生生成一个全新的角色。
+        相似度含义：0%=完全不同的新角色，100%=保留核心设定但做细微变化。
+
+        你必须严格按照 JSON 格式输出，不要输出任何其他内容，不要用 markdown 代码块包裹：
+        {"name":"角色名（2-4字中文名）","gender":"男或女","age_description":"年龄段描述","appearance":"外貌描写（40-80字）","origin":"出身背景（40-80字）","identity":"当前身份（20-50字）","depth_level":"L2"}
+
+        生成规则：
+        1. 新角色不能和原角色同名
+        2. 根据相似度保留或变换以下维度：
+           - 性别/年龄：相似度高时保持性别，低时可变换
+           - 性格/身份：相似度高时身份同类型，低时可完全不同
+           - 出身/背景：相似度高时背景相近，低时可来自不同地域/阶层
+           - 外貌：相似度高时保留部分特征，低时完全不同
+        3. 角色要有特色，避免脸谱化
+        4. depth_level 可选值：L0（背景板）、L1（配角）、L2（重要配角）、L3（主角）
+        """;
+
+    @PostMapping("/character-fission/{characterId}")
+    public ResponseEntity<?> characterFission(@PathVariable Long characterId,
+                                               @RequestBody(required = false) Map<String, String> req) {
+        long start = System.currentTimeMillis();
+        boolean success = false;
+        try {
+            var character = characterService.getById(characterId).orElse(null);
+            if (character == null) {
+                return ResponseEntity.status(404).body(Map.of("message", "角色不存在"));
+            }
+
+            Long userId = SecurityUtil.getCurrentUserId();
+            if (character.getBook() == null || character.getBook().getOwner() == null
+                    || !character.getBook().getOwner().getId().equals(userId)) {
+                throw new BusinessException(403, "无权访问此角色");
+            }
+
+            int similarity = 50;
+            String hint = "";
+            if (req != null) {
+                if (req.containsKey("similarity")) {
+                    try { similarity = Integer.parseInt(req.get("similarity")); } catch (NumberFormatException e) { /* use default */ }
+                    similarity = Math.max(0, Math.min(100, similarity));
+                }
+                hint = req.getOrDefault("hint", "");
+            }
+
+            String systemPrompt = promptConfig.get("character-fission", FALLBACK_FISSION);
+
+            StringBuilder userMsg = new StringBuilder();
+            userMsg.append("请根据以下角色生成一个相似度为 ").append(similarity).append("% 的新角色：\n\n");
+            userMsg.append("【原角色信息】\n");
+            userMsg.append("姓名：").append(character.getName()).append("\n");
+            if (character.getGender() != null) userMsg.append("性别：").append(character.getGender()).append("\n");
+            if (character.getAgeDescription() != null) userMsg.append("年龄：").append(character.getAgeDescription()).append("\n");
+            if (character.getIdentity() != null) userMsg.append("身份：").append(character.getIdentity()).append("\n");
+            if (character.getOrigin() != null) userMsg.append("出身：").append(character.getOrigin()).append("\n");
+            if (character.getAppearance() != null) userMsg.append("外貌：").append(character.getAppearance()).append("\n");
+            if (character.getRace() != null) userMsg.append("种族：").append(character.getRace()).append("\n");
+            if (character.getDepthLevel() != null) userMsg.append("深度等级：").append(character.getDepthLevel().name()).append("\n");
+
+            if (!hint.isBlank()) {
+                userMsg.append("\n额外要求：").append(hint);
+            }
+
+            String result = callDeepSeek(systemPrompt, userMsg.toString(), 1.0, 600, null);
+            String json = extractJson(result);
+            success = true;
+            return ResponseEntity.ok(objectMapper.readTree(json));
+        } catch (Exception e) {
+            log.error("Character fission failed", e);
+            return ResponseEntity.status(500).body(Map.of("message", "裂变失败: " + e.getMessage()));
+        } finally {
+            generationLogService.logNonStreaming(null, "deepseek-chat",
+                System.currentTimeMillis() - start, null,
+                "character-fission: characterId=" + characterId, success);
+        }
+    }
 }

@@ -6,6 +6,7 @@ import { updateBook } from '@/api/book'
 import { STATUS_LABEL, CREATION_LABEL, LENGTH_LABEL } from '@/utils/labels'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import BookStats from '@/components/BookStats.vue'
+import SearchModal from '@/components/SearchModal.vue'
 
 const route = useRoute()
 const store = useBookStore()
@@ -13,6 +14,7 @@ const store = useBookStore()
 const newTaskText = ref('')
 const taskSaving = ref(false)
 const changingStatus = ref(false)
+const showSearch = ref(false)
 
 const BOOK_STATUSES = ['DRAFT', 'SERIALIZING', 'COMPLETED', 'ARCHIVED']
 
@@ -150,6 +152,7 @@ watch(() => route.params.id, (newId) => {
       <div class="page-header">
         <router-link to="/books" class="back-link">&larr; 返回列表</router-link>
         <button class="btn-export" @click="handleExport">导出 MD</button>
+        <button class="btn-search" @click="showSearch = true">🔍 全文搜索</button>
       </div>
 
       <div class="detail-card">
@@ -260,6 +263,8 @@ watch(() => route.params.id, (newId) => {
 
         <p v-else class="constraint-empty">暂无负向约束，添加以降低 AI 套路化表达</p>
       </div>
+
+      <SearchModal :visible="showSearch" :book-id="route.params.id" @close="showSearch = false" />
     </template>
   </div>
 </template>
@@ -285,6 +290,20 @@ watch(() => route.params.id, (newId) => {
   transition: all 0.15s;
 }
 .btn-export:hover { background: #f5f3ff; }
+
+.btn-search {
+  padding: 6px 16px;
+  background: var(--color-brand);
+  color: #fff;
+  border: 1px solid var(--color-brand);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn-search:hover { background: #4a2fa8; }
 
 .detail-card {
   background: var(--bg-surface);
@@ -362,7 +381,7 @@ watch(() => route.params.id, (newId) => {
 
 .nav-card p {
   font-size: 13px;
-  color: #888;
+  color: var(--text-muted);
 }
 
 /* ── Stats ── */

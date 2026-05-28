@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { listCharacters, createCharacter, updateCharacter, deleteCharacter, getBook } from '@/api/book'
-import { randomCharacter, getGenerationStatus } from '@/api/generation'
+import { randomCharacter, getGenerationStatus, characterFission } from '@/api/generation'
 import { useRequest } from '@/composables/useRequest'
 import { useDrafts } from '@/composables/useDrafts'
 import ModalConfirm from '@/components/ModalConfirm.vue'
@@ -61,6 +61,11 @@ const { execute: updateExec } = useRequest(updateCharacter)
 const { execute: deleteExec } = useRequest(deleteCharacter)
 
 const randomGenerating = ref(false)
+const fissionShow = ref(false)
+const fissionChar = ref(null)
+const fissionSimilarity = ref(50)
+const fissionHint = ref('')
+const fissionLoading = ref(false)
 const preview = ref({ show: false, type: 'character', data: null })
 const { add: addDraft } = useDrafts(bookId.value)
 const synopsis = ref('')
@@ -109,6 +114,27 @@ async function handleRandomCharacter() {
     error.value = e.message || '生成失败'
   } finally {
     randomGenerating.value = false
+  }
+}
+
+function openFission(c) {
+  fissionChar.value = c
+  fissionSimilarity.value = 50
+  fissionHint.value = ''
+  fissionShow.value = true
+}
+async function handleFission() {
+  if (!fissionChar.value) return
+  fissionLoading.value = true
+  error.value = ''
+  try {
+    const data = await characterFission(fissionChar.value.id, fissionSimilarity.value, fissionHint.value.trim())
+    fissionShow.value = false
+    preview.value = { show: true, type: 'character', data }
+  } catch (e) {
+    error.value = e.message || '裂变失败'
+  } finally {
+    fissionLoading.value = false
   }
 }
 
@@ -463,6 +489,7 @@ watch(() => route.params.id, (newId) => {
           <div class="card-actions">
             <button class="btn-outline" @click.stop="openChat(c)">对话</button>
             <button class="btn-outline" @click.stop="openEdit(c)">编辑</button>
+            <button class="btn-outline btn-fission" @click.stop="openFission(c)">裂变</button>
             <button class="btn-outline btn-outline-danger" @click.stop="handleDelete(c.id, c.name)">删除</button>
           </div>
         </div>
@@ -592,6 +619,35 @@ watch(() => route.params.id, (newId) => {
       @draft="draftCharacter"
       @close="closeCharacterPreview"
     />
+
+    <!-- Fission modal -->
+    <Teleport to="body">
+      <div v-if="fissionShow" class="fission-overlay" @click.self="fissionShow = false">
+        <div class="fission-modal">
+          <div class="fission-header">
+            <h3>角色裂变</h3>
+            <button class="fission-close" @click="fissionShow = false">&times;</button>
+          </div>
+          <div class="fission-source">
+            源角色：<strong>{{ fissionChar?.name }}</strong>
+            <span v-if="fissionChar?.depth_level" class="depth-badge-sm">{{ fissionChar.depth_level }}</span>
+          </div>
+          <div class="fission-field">
+            <label>相似度 <span class="fission-val">{{ fissionSimilarity }}%</span></label>
+            <input type="range" v-model.number="fissionSimilarity" min="0" max="100" step="5" class="fission-slider" />
+            <div class="fission-range-labels"><span>完全不同</span><span>克隆变体</span></div>
+          </div>
+          <div class="fission-field">
+            <label>额外提示（可选）</label>
+            <textarea v-model="fissionHint" rows="2" placeholder="例如：生成一个反派、改为女性角色、来自敌对势力..." class="fission-hint"></textarea>
+          </div>
+          <div class="fission-actions">
+            <button class="btn btn-primary" :disabled="fissionLoading" @click="handleFission">{{ fissionLoading ? '裂变中...' : '开始裂变' }}</button>
+            <button class="btn btn-outline" @click="fissionShow = false">取消</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <CharacterChat
       :character="chatCharacter"
@@ -890,6 +946,32 @@ watch(() => route.params.id, (newId) => {
 .btn-outline-danger:hover {
   background: #fef2f2;
 }
+.btn-fission { color: #7c3aed; border-color: #c4b5fd; }
+.btn-fission:hover { background: #f5f3ff; }
+
+/* ── Fission modal ── */
+.fission-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center;
+}
+.fission-modal {
+  background: var(--bg-surface); border-radius: 12px;
+  padding: 24px; width: 420px; max-width: 90vw;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+}
+.fission-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.fission-header h3 { font-size: 18px; font-weight: 700; margin: 0; }
+.fission-close { font-size: 22px; background: none; border: none; cursor: pointer; color: var(--text-secondary); }
+.fission-source { font-size: 14px; color: var(--text-secondary); margin-bottom: 16px; padding: 8px 12px; background: var(--bg-surface-hover); border-radius: 6px; }
+.depth-badge-sm { display: inline-block; margin-left: 6px; padding: 1px 6px; font-size: 11px; font-weight: 600; background: #ede9fe; color: #6d28d9; border-radius: 4px; }
+.fission-field { margin-bottom: 16px; }
+.fission-field label { display: block; font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+.fission-val { color: #7c3aed; font-weight: 700; }
+.fission-slider { width: 100%; accent-color: #7c3aed; }
+.fission-range-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.fission-hint { width: 100%; padding: 8px 12px; font-size: 13px; font-family: inherit; border: 1px solid var(--border-input); border-radius: 6px; resize: vertical; }
+.fission-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
 
 /* ── Form controls ── */
 .form-group {

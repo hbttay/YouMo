@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/books")
 @RequiredArgsConstructor
@@ -41,6 +43,7 @@ public class ExportController {
     public ResponseEntity<byte[]> exportMd(@PathVariable Long id) {
         Long userId = SecurityUtil.getCurrentUserId();
         Book book = bookService.getOwnedBook(id, userId);
+        log.info("Exporting book: userId={}, bookId={}, title={}", userId, id, book.getTitle());
 
         StringBuilder md = new StringBuilder();
         md.append("# ").append(book.getTitle()).append("\n\n");

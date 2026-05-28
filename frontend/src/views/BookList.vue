@@ -215,7 +215,7 @@ function cancelDelete() { deleteTarget.value = null }
 .sort-btn.active { background: #f5f3ff; border-color: var(--color-brand); color: var(--color-brand); }
 
 /* Empty */
-.empty { text-align: center; padding: 60px 20px; color: #888; }
+.empty { text-align: center; padding: 60px 20px; color: var(--text-muted); }
 
 /* Grid */
 .book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }

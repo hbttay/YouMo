@@ -11,6 +11,7 @@ import com.youmo.common.base.ApiResponse;
 import com.youmo.common.entity.User;
 import com.youmo.core.service.UserService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
@@ -30,6 +32,7 @@ public class UserController {
     @PostMapping("/register")
     public ApiResponse<UserResponse> register(@RequestBody CreateUserRequest req) {
         User user = userService.create(req.getEmail(), req.getUsername(), req.getPassword());
+        log.info("User registered: email={}, id={}", req.getEmail(), user.getId());
         return ApiResponse.ok(UserResponse.from(user));
     }
 
@@ -37,6 +40,7 @@ public class UserController {
     public ApiResponse<LoginResponse> login(@RequestBody LoginRequest req) {
         User user = userService.login(req.getAccount(), req.getPassword());
         String token = jwtTokenProvider.generateToken(user.getId(), user.getEmail());
+        log.info("User login: email={}, id={}", user.getEmail(), user.getId());
         return ApiResponse.ok(new LoginResponse(token, UserResponse.from(user)));
     }
 
@@ -59,6 +63,7 @@ public class UserController {
     public ApiResponse<Void> changePassword(@RequestBody ChangePasswordRequest req) {
         Long userId = SecurityUtil.getCurrentUserId();
         userService.changePassword(userId, req.getOldPassword(), req.getNewPassword());
+        log.info("Password changed: userId={}", userId);
         return ApiResponse.ok();
     }
 

@@ -1,11 +1,12 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getChapterContent, saveChapterContent, getOutline, getVersionHistory, createAnnotation, checkConsistency, updateOutlineNodeStatus } from '@/api/book'
-import { streamContinue, streamRewrite, getStreamBuffer, getSuggestions, continuePlan, streamContinueExecute, analyzeChapter, optimizeInstructions } from '@/api/generation'
+import { getChapterContent, saveChapterContent, getOutline, getVersionHistory, createAnnotation, checkConsistency, updateOutlineNodeStatus, getBook } from '@/api/book'
+import { streamContinue, streamRewrite, getStreamBuffer, getSuggestions, continuePlan, streamContinueExecute, analyzeChapter, optimizeInstructions, getWritingGuide } from '@/api/generation'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import ReviewPanel from '@/components/ReviewPanel.vue'
 import AnnotationSidebar from '@/components/AnnotationSidebar.vue'
+import InlinePopup from '@/components/InlinePopup.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -176,6 +177,10 @@ const showAnalysisPanel = ref(true) // analysis panel collapsed
 const allPanelsCollapsed = ref(false)
 const showAiMenu = ref(false)
 const showSettings = ref(false)
+const headerRef = ref(null)
+const showFloatingToolbar = ref(false)
+const floatingPos = ref({ top: 60, right: 24 })
+let _headerObserver = null
 
 function toggleAllPanels() {
   allPanelsCollapsed.value = !allPanelsCollapsed.value
@@ -206,6 +211,53 @@ function getContextForTarget(target) {
     return sc ? sc.content : content.value
   }
   return content.value
+}
+
+function isGenericTitle(t) {
+  if (!t || t.length < 3) return true
+  const generic = [
+    /^第[一二三四五六七八九十百千\d]+[章节部篇].*$/,
+    /^chapter\s*\d+/i,
+    /^\d+$/,
+  ]
+  return generic.some(p => p.test(t))
+}
+
+async function assembleEmptyContext() {
+  const parts = []
+  try {
+    const bookRes = await getBook(bookId)
+    if (bookRes?.data) {
+      const book = bookRes.data
+      if (book.one_sentence) parts.push('故事梗概：' + book.one_sentence)
+      if (book.core_idea) parts.push('核心创意：' + book.core_idea)
+      if (book.theme) parts.push('题材类型：' + book.theme)
+    }
+  } catch (e) { /* offline fallback */ }
+
+  if (title && title !== '未命名章节' && !isGenericTitle(title)) {
+    parts.push('本章标题：「' + title + '」')
+  }
+
+  // Include previous chapter tail for continuity
+  if (prevNode.value && structureId) {
+    try {
+      const prevRes = await getChapterContent(prevNode.value.id)
+      if (prevRes?.data?.content) {
+        const prevText = prevRes.data.content
+        const lastPart = prevText.length > 500
+          ? '…' + prevText.slice(-500)
+          : prevText
+        parts.push('前一章末尾：' + lastPart)
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  if (instructions.value && instructions.value.trim()) {
+    parts.push('创作要求：' + instructions.value.trim())
+  }
+
+  return parts.join('\n\n')
 }
 
 function appendChunkToTarget(target, chunk) {
@@ -326,6 +378,11 @@ function jumpToIssue(issue) {
   setTimeout(() => { if (genError.value.includes(keywords[0])) genError.value = '' }, 3000)
 }
 
+function dismissIssue(idx) {
+  consistencyIssues.value.splice(idx, 1)
+  if (consistencyIssues.value.length === 0) consistencyChecked.value = false
+}
+
 async function fixConsistencyIssue(issue, idx) {
   const keywords = extractKeywords(issue)
   if (!keywords.length) { genError.value = '该问题未关联正文关键词，无法AI修正'; return }
@@ -358,18 +415,33 @@ async function fixConsistencyIssue(issue, idx) {
   const pos = text.indexOf(foundKw)
   if (pos === -1) return
 
-  // extract surrounding paragraph (bound by double newlines)
+  // extract surrounding context window (~300 chars around keyword)
   let start = text.lastIndexOf('\n\n', pos)
-  start = start === -1 ? 0 : start + 2
+  if (start === -1) {
+    // no double newline — use single newline or sentence boundary
+    start = text.lastIndexOf('\n', pos)
+    if (start === -1 || pos - start > 300) start = Math.max(0, pos - 300)
+    else start = start + 1
+  } else {
+    start = start + 2
+  }
   let end = text.indexOf('\n\n', pos)
-  end = end === -1 ? text.length : end
+  if (end === -1) {
+    end = text.indexOf('\n', pos + 1)
+    if (end === -1 || end - pos > 300) end = Math.min(text.length, pos + 300)
+  }
+  if (end - start > 2000) { end = Math.min(text.length, start + 2000) }
   const paragraph = text.substring(start, end)
+
+  // set textarea selection so acceptInlineResult knows where to apply
+  ta.focus()
+  ta.setSelectionRange(start, end)
 
   fixingIdx.value = idx
   try {
     inlineSelectedText.value = paragraph
     inlineSource.value = ta
-    inlineMode.value = 'polish'
+    inlineMode.value = 'fix-consistency'
     inlineLoading.value = true
     inlineResult.value = ''
     inlineAbortController = new AbortController()
@@ -377,20 +449,22 @@ async function fixConsistencyIssue(issue, idx) {
     const { streamRewrite } = await import('@/api/generation')
     await streamRewrite({
       context: paragraph,
-      mode: 'polish',
-      temperature: 0.6,
-      maxTokens: paragraph.length + 300,
+      mode: 'fix-consistency',
+      instructions: `实体：${issue.entity}\n问题：${issue.description}\n类型：${issue.type}\n严重程度：${issue.severity}`,
+      temperature: 0.3,
+      maxTokens: paragraph.length + 500,
       signal: inlineAbortController.signal,
     }, {
       onChunk(chunk) { inlineResult.value += chunk },
       onDone() {
         inlineLoading.value = false
         fixingIdx.value = -1
-        // show inline popup with result
+        // position popup near the paragraph, clamped within viewport
         const rect = ta.getBoundingClientRect()
         const lineHeight = parseInt(getComputedStyle(ta).lineHeight) || 20
-        const linesBefore = text.substring(0, pos).split('\n').length - 1
-        inlinePos.value = { top: rect.top + linesBefore * lineHeight + 30, left: rect.left + 20 }
+        const linesBefore = text.substring(0, start).split('\n').length - 1
+        const visualTop = rect.top + linesBefore * lineHeight - ta.scrollTop
+        inlinePos.value = { top: Math.max(10, Math.min(window.innerHeight - 200, visualTop)), left: rect.left + 20 }
         inlinePopup.value = true
       },
       onError(msg) {
@@ -409,10 +483,14 @@ async function handleAiContinue(target) {
   genError.value = ''
   resetInlineState()
 
-  const ctx = getContextForTarget(target)
+  let ctx = getContextForTarget(target)
   if (!ctx.trim()) {
-    genError.value = '请先写一些正文作为前文'
-    return
+    // Empty textarea — assemble writing brief from book metadata + chapter title
+    ctx = await assembleEmptyContext()
+    if (!ctx.trim()) {
+      genError.value = '请在续写指令中描述你想写的内容，或先在正文中写一些开头'
+      return
+    }
   }
 
   // Plan mode: generate plan first, then let user approve
@@ -441,6 +519,7 @@ function doStreamContinue(target, ctx, plan) {
   const commonParams = {
     bookId,
     context: ctx,
+    chapterTitle: title !== '未命名章节' ? title : undefined,
     temperature: temperature.value,
     instructions: instructions.value || undefined,
     signal: abortController.signal,
@@ -673,12 +752,36 @@ const inlineLoading = ref(false)
 const inlineSource = ref(null)
 let inlineAbortController = null
 
+// Floating toolbar drag
+let _floatDragging = false
+let _floatDragOff = { x: 0, y: 0 }
+function onFloatDragStart(e) {
+  if (e.target.closest('button') || e.target.closest('select') || e.target.closest('.dropdown-menu')) return
+  _floatDragging = true
+  _floatDragOff = { x: e.clientX + floatingPos.value.right, y: e.clientY - floatingPos.value.top }
+  document.addEventListener('mousemove', onFloatDragMove)
+  document.addEventListener('mouseup', onFloatDragEnd)
+}
+function onFloatDragMove(e) {
+  if (!_floatDragging) return
+  floatingPos.value = {
+    top: Math.max(0, e.clientY - _floatDragOff.y),
+    right: Math.max(0, _floatDragOff.x - e.clientX),
+  }
+}
+function onFloatDragEnd() {
+  _floatDragging = false
+  document.removeEventListener('mousemove', onFloatDragMove)
+  document.removeEventListener('mouseup', onFloatDragEnd)
+}
+
 const inlineModes = [
   { value: 'fix', label: '纠错', icon: '✏️' },
   { value: 'polish', label: '润色', icon: '✨' },
   { value: 'expand', label: '扩写', icon: '📖' },
   { value: 'summarize', label: '缩写', icon: '📝' },
   { value: 'annotate', label: '批注', icon: '💬' },
+  { value: 'fix-consistency', label: '一致性修正', icon: '🔧', _internal: true },
 ]
 
 function toggleInlineAi() {
@@ -713,6 +816,7 @@ function resetInlineState() {
   inlinePopup.value = false
   inlineResult.value = ''
   inlineMode.value = ''
+  fixingIdx.value = -1
   annotateComment.value = ''
 }
 
@@ -748,6 +852,11 @@ function acceptInlineResult() {
   ta.value = ta.value.substring(0, start) + inlineResult.value + ta.value.substring(end)
   ta.dispatchEvent(new Event('input', { bubbles: true }))
   ta.selectionStart = ta.selectionEnd = start + inlineResult.value.length
+  // if this came from consistency fix, remove the fixed issue
+  if (fixingIdx.value >= 0) {
+    consistencyIssues.value.splice(fixingIdx.value, 1)
+    if (consistencyIssues.value.length === 0) consistencyChecked.value = false
+  }
   closeInlinePopup()
   doSave('DRAFT')
 }
@@ -757,7 +866,12 @@ const focusMode = ref(false)
 
 function toggleFocus() {
   focusMode.value = !focusMode.value
+  if (focusMode.value) showFloatingToolbar.value = false
 }
+
+watch(focusMode, (v) => {
+  if (v) showFloatingToolbar.value = false
+})
 
 function exitFocus(e) {
   if (e.key === 'Escape') {
@@ -768,9 +882,15 @@ function exitFocus(e) {
 
 // ── Chapter analysis ─────────────────────────
 const checkingConsistency = ref(false)
+const consistencyCheckProgress = ref(0)
+const consistencyCheckSteps = ['角色一致性', '时间线', '世界观', '伏笔', '文风']
+let _checkProgressTimer = null
 const analyzing = ref(false)
 const analysisResult = ref(null)
 const showAnalysis = ref(false)
+const guideLoading = ref(false)
+const guideResult = ref(null)
+const showGuide = ref(true)
 
 // ── Annotations ──
 const annotationSidebarOpen = ref(false)
@@ -807,21 +927,46 @@ async function handleAnalyze() {
   }
 }
 
+// ── Writing guide ────────────────────────
+async function handleWritingGuide() {
+  if (guideLoading.value) return
+  const ctx = scenes.value.length ? chapterContent.value : content.value
+  if (!ctx.trim()) { genError.value = '请先写一些正文'; return }
+  guideLoading.value = true
+  genError.value = ''
+  try {
+    const result = await getWritingGuide({ bookId, context: ctx, structureId })
+    guideResult.value = result
+    showGuide.value = true
+  } catch (e) {
+    genError.value = e.message || '写作指导失败'
+  } finally {
+    guideLoading.value = false
+  }
+}
+
 // ── Manual consistency check ─────────────
 async function handleCheckConsistency() {
   if (checkingConsistency.value) return
   if (!structureId) { genError.value = '未找到章节ID'; return }
   checkingConsistency.value = true
+  consistencyCheckProgress.value = 0
   genError.value = ''
+  // simulated progress while waiting for parallel checks
+  _checkProgressTimer = setInterval(() => {
+    if (consistencyCheckProgress.value < 4) consistencyCheckProgress.value++
+  }, 2500)
   try {
     const res = await checkConsistency(structureId)
-    // Axios interceptor unwraps: res = { success, data, message }
+    clearInterval(_checkProgressTimer)
+    consistencyCheckProgress.value = 5
     if (res?.data) {
       handleConsistencyResult(res.data)
     } else {
       genError.value = res?.message || '一致性检查返回空结果'
     }
   } catch (e) {
+    clearInterval(_checkProgressTimer)
     const msg = e?.response?.data?.message || e.message || '一致性检查失败'
     genError.value = msg
   } finally {
@@ -922,17 +1067,38 @@ function computeDiff() {
   if (!compareA.value || !compareB.value) return
   const a = (compareA.value.content || '').split('\n')
   const b = (compareB.value.content || '').split('\n')
-  const result = []
-  const maxLen = Math.max(a.length, b.length)
-  for (let i = 0; i < maxLen; i++) {
-    const la = i < a.length ? a[i] : ''
-    const lb = i < b.length ? b[i] : ''
-    if (la === lb) {
-      result.push({ type: 'same', a: la, b: lb })
-    } else {
-      result.push({ type: 'diff', a: la, b: lb })
+  const m = a.length, n = b.length
+
+  // LCS table — use Uint16Array rows for memory efficiency
+  const dp = new Array(m + 1)
+  for (let i = 0; i <= m; i++) {
+    dp[i] = new Uint16Array(n + 1)
+  }
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1])
     }
   }
+
+  // Backtrack
+  const result = []
+  let i = m, j = n
+  const rev = []
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+      rev.push({ type: 'same', text: a[i - 1] })
+      i--; j--
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      rev.push({ type: 'added', text: b[j - 1] })
+      j--
+    } else {
+      rev.push({ type: 'removed', text: a[i - 1] })
+      i--
+    }
+  }
+  for (let k = rev.length - 1; k >= 0; k--) result.push(rev[k])
   diffLines.value = result
 }
 
@@ -1125,6 +1291,11 @@ watch(() => route.params.structureId, (newId) => {
 })
   document.addEventListener('keydown', onKeyNav)
   document.addEventListener('click', closeMenus)
+  // Floating toolbar: show when header scrolls out of view
+  _headerObserver = new IntersectionObserver(([e]) => {
+    showFloatingToolbar.value = !e.isIntersecting && !focusMode.value
+  }, { threshold: 0 })
+  if (headerRef.value) _headerObserver.observe(headerRef.value)
 })
 
 onUnmounted(() => {
@@ -1132,6 +1303,7 @@ onUnmounted(() => {
   if (savedTimer) clearTimeout(savedTimer)
   if (abortController) abortController.abort()
   if (inlineAbortController) inlineAbortController.abort()
+  if (_headerObserver) _headerObserver.disconnect()
   document.removeEventListener('keydown', exitFocus)
   document.removeEventListener('keydown', onKeyNav)
   document.removeEventListener('click', closeMenus)
@@ -1154,7 +1326,7 @@ onBeforeRouteLeave((_to, _from, next) => {
 <template>
   <div class="chapter-write" :class="{ 'focus-mode': focusMode }">
     <!-- Header -->
-    <div class="write-header" v-show="!focusMode">
+    <div ref="headerRef" class="write-header" v-show="!focusMode">
       <div class="header-left">
         <router-link :to="`/books/${bookId}/outline`" class="back-link">&larr; 返回大纲</router-link>
         <div class="nav-btns">
@@ -1198,8 +1370,8 @@ onBeforeRouteLeave((_to, _from, next) => {
               <button class="dropdown-item" @click="openVersions(); showSettings = false">📋 版本历史</button>
             </div>
           </div>
-          <!-- Primary: 续写 -->
-          <button class="btn-ai" title="在正文末尾追加 AI 生成的下一段内容" @click="handleAiContinue(null)">续写</button>
+          <!-- Primary: 续写/创作 -->
+          <button class="btn-ai" title="在正文末尾追加 AI 生成的下一段内容" @click="handleAiContinue(null)">{{ getContextForTarget(null).trim() ? '续写' : '创作' }}</button>
           <!-- AI dropdown: 改写 + 审改 + 分析 + 一致性 -->
           <div class="ai-dropdown">
             <button class="btn-ai-more" @click="showAiMenu = !showAiMenu" title="更多 AI 工具">AI 工具 ▾</button>
@@ -1212,10 +1384,11 @@ onBeforeRouteLeave((_to, _from, next) => {
               </div>
               <button class="dropdown-item" :disabled="reviewing" @click="handleReview(); showAiMenu = false">{{ reviewing ? '审改中...' : '🔍 审改' }}</button>
               <button class="dropdown-item" :disabled="analyzing" @click="handleAnalyze(); showAiMenu = false">{{ analyzing ? '分析中...' : '📊 分析' }}</button>
+              <button class="dropdown-item" :disabled="guideLoading" @click="handleWritingGuide(); showAiMenu = false">{{ guideLoading ? '生成中...' : '📝 写作指导' }}</button>
             </div>
           </div>
           <button class="btn-consistency" :disabled="checkingConsistency" @click="handleCheckConsistency()" title="检查本章与全文的冲突和矛盾">
-            {{ checkingConsistency ? '检查中...' : '🔗 一致性' }}
+            {{ checkingConsistency ? `检查中 ${consistencyCheckProgress}/5 ${consistencyCheckSteps[Math.min(consistencyCheckProgress, 4)] || ''}` : '🔗 一致性' }}
           </button>
           <button class="btn-annotations" title="查看和管理批注" @click="annotationSidebarOpen = true">
             💬<span v-if="annotationCount" class="annotation-badge">{{ annotationCount }}</span>
@@ -1229,6 +1402,37 @@ onBeforeRouteLeave((_to, _from, next) => {
           定稿
         </button>
       </div>
+    </div>
+
+    <!-- Floating AI toolbar — appears when header scrolls out of view -->
+    <div v-if="showFloatingToolbar" class="floating-toolbar" :style="{ top: floatingPos.top + 'px', right: floatingPos.right + 'px' }" @mousedown="onFloatDragStart">
+      <template v-if="!generating && !rewriting">
+        <div class="float-drag-handle" title="拖动移动"></div>
+        <button class="btn-ai btn-ai-float" title="续写" @click="handleAiContinue(null)">{{ getContextForTarget(null).trim() ? '续写' : '创作' }}</button>
+        <div class="ai-dropdown">
+          <button class="btn-ai-more btn-ai-more-float" @click="showAiMenu = !showAiMenu" title="更多 AI 工具">AI 工具 ▾</button>
+          <div class="dropdown-menu" v-if="showAiMenu" @click.stop>
+            <div class="dropdown-item dropdown-rewrite-row">
+              <select v-model="rewriteMode" class="rewrite-select">
+                <option v-for="m in modeOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
+              </select>
+              <button class="btn-rewrite-dropdown" @click="handleRewrite(null); showAiMenu = false">改写</button>
+            </div>
+            <button class="dropdown-item" :disabled="reviewing" @click="handleReview(); showAiMenu = false">{{ reviewing ? '审改中...' : '🔍 审改' }}</button>
+            <button class="dropdown-item" :disabled="analyzing" @click="handleAnalyze(); showAiMenu = false">{{ analyzing ? '分析中...' : '📊 分析' }}</button>
+              <button class="dropdown-item" :disabled="guideLoading" @click="handleWritingGuide(); showAiMenu = false">{{ guideLoading ? '生成中...' : '📝 写作指导' }}</button>
+          </div>
+        </div>
+        <button class="btn-consistency btn-consistency-float" :disabled="checkingConsistency" @click="handleCheckConsistency()" :title="checkingConsistency ? '检查中...' : '检查一致性'">
+          {{ checkingConsistency ? `检查中 ${consistencyCheckProgress}/5` : '🔗' }}
+        </button>
+        <button class="btn-save btn-save-float" :disabled="saving" @click="doSave('DRAFT')">{{ saving ? '...' : '保存' }}</button>
+        <span class="word-count word-count-float">{{ totalWords }} 字</span>
+      </template>
+      <template v-else>
+        <span class="float-gen-label">{{ generating ? 'AI 续写中...' : 'AI 改写中...' }}</span>
+        <button class="btn-ai-stop btn-ai-stop-float" @click="handleAiStop">停止生成</button>
+      </template>
     </div>
 
     <!-- Instructions panel -->
@@ -1393,12 +1597,31 @@ onBeforeRouteLeave((_to, _from, next) => {
       </template>
     </div>
 
+    <!-- Writing guide -->
+    <div v-if="guideResult" class="guide-card" :class="{ collapsed: !showGuide }">
+      <div class="guide-title" @click="showGuide = !showGuide">
+        <span>写作指导 {{ showGuide ? '▾' : '▸' }}</span>
+        <button class="guide-close" @click.stop="guideResult = null">&times;</button>
+      </div>
+      <div v-if="showGuide" class="guide-body">
+        <div v-for="(g, i) in guideResult.guides" :key="i" class="guide-item">
+          <div class="guide-item-header">
+            <span class="guide-dimension">{{ g.dimension }}</span>
+            <span class="guide-severity" :class="'sev-' + (g.severity || 'medium')">{{ { high: '重要', medium: '建议', low: '锦上添花' }[g.severity] || '建议' }}</span>
+          </div>
+          <div class="guide-issue">{{ g.issue }}</div>
+          <div class="guide-suggestion">{{ g.suggestion }}</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Consistency warnings -->
     <div v-if="consistencyChecked" class="consistency-card">
       <div class="consistency-title clickable" @click="showConsistency = !showConsistency">
         <span class="panel-chevron">{{ showConsistency ? '▾' : '▸' }}</span>
         一致性检查
         <span v-if="!consistencyIssues.length" style="color:#16a34a;font-weight:400;margin-left:8px;">✅ 未发现问题</span>
+        <button v-if="consistencyIssues.length > 1" class="btn-dismiss-all" @click.stop="consistencyIssues = []; consistencyChecked = false">全部忽略</button>
       </div>
       <template v-if="showConsistency">
       <div class="consistency-tabs">
@@ -1422,6 +1645,7 @@ onBeforeRouteLeave((_to, _from, next) => {
         <button class="btn-fix-issue" :disabled="fixingIdx === i" @click.stop="fixConsistencyIssue(issue, i)">
           {{ fixingIdx === i ? '修正中...' : 'AI修正' }}
         </button>
+        <button class="btn-dismiss-issue" @click.stop="dismissIssue(i)">忽略</button>
       </div>
       </template>
     </div>
@@ -1437,55 +1661,29 @@ onBeforeRouteLeave((_to, _from, next) => {
 
     <!-- Single textarea (SCENE or CHAPTER without children) -->
     <div v-else-if="scenes.length === 0" class="editor-area" @mouseup="onTextareaMouseup">
-      <!-- Inline AI popup -->
-      <div v-if="inlinePopup" class="inline-popup" :style="{ top: inlinePos.top + 'px', left: inlinePos.left + 'px' }">
-        <div v-if="!inlineMode" class="inline-actions">
-          <button v-for="m in inlineModes" :key="m.value" class="inline-btn" @click="handleInlineAction(m.value)">{{ m.icon }} {{ m.label }}</button>
-          <button class="inline-close" @click="closeInlinePopup">&times;</button>
-        </div>
-        <div v-else-if="inlineMode === 'annotate'" class="inline-annotate">
-          <div class="inline-annotate-header">
-            <span>💬 添加批注</span>
-            <span class="inline-selected-preview">{{ inlineSelectedText }}</span>
-          </div>
-          <textarea v-model="annotateComment" class="inline-annotate-input" rows="3" placeholder="写下你的备注..."></textarea>
-          <div class="inline-annotate-meta">
-            <select v-model="annotateCategory" class="inline-select">
-              <option value="suggestion">建议</option>
-              <option value="grammar">语法</option>
-              <option value="style">文风</option>
-              <option value="plot_hole">剧情漏洞</option>
-              <option value="character">角色</option>
-            </select>
-            <select v-model="annotateSeverity" class="inline-select">
-              <option value="INFO">提示</option>
-              <option value="MINOR">轻微</option>
-              <option value="MAJOR">严重</option>
-            </select>
-          </div>
-          <div class="inline-result-actions">
-            <button class="btn-apply" :disabled="!annotateComment.trim() || annotating" @click="submitAnnotation">{{ annotating ? '提交中...' : '提交批注' }}</button>
-            <button class="btn-undo" @click="closeInlinePopup">取消</button>
-          </div>
-        </div>
-        <div v-else class="inline-result">
-          <div class="inline-loading" v-if="inlineLoading">AI 正在{{ inlineModes.find(m => m.value === inlineMode)?.label }}...</div>
-          <template v-else>
-            <div class="inline-diff">
-              <div class="inline-original">{{ inlineSelectedText }}</div>
-              <div class="inline-suggested">{{ inlineResult }}</div>
-            </div>
-            <div class="inline-result-actions">
-              <button class="btn-apply" @click="acceptInlineResult">采纳</button>
-              <button class="btn-undo" @click="closeInlinePopup">拒绝</button>
-            </div>
-          </template>
-          <div class="inline-mode-label">{{ inlineModes.find(m => m.value === inlineMode)?.label }}</div>
-        </div>
-      </div>
+      <InlinePopup
+        :visible="inlinePopup"
+        :mode="inlineMode"
+        :loading="inlineLoading"
+        :selected-text="inlineSelectedText"
+        :result="inlineResult"
+        :position="inlinePos"
+        :modes="inlineModes"
+        :annotate-comment="annotateComment"
+        :annotate-category="annotateCategory"
+        :annotate-severity="annotateSeverity"
+        :annotating="annotating"
+        @close="closeInlinePopup"
+        @select-mode="handleInlineAction"
+        @accept="acceptInlineResult"
+        @submit-annotation="submitAnnotation"
+        @update:annotate-comment="annotateComment = $event"
+        @update:annotate-category="annotateCategory = $event"
+        @update:annotate-severity="annotateSeverity = $event"
+      />
       <textarea
         v-model="content"
-        class="write-textarea"
+        :class="['write-textarea', { 'fix-highlight': inlinePopup && fixingIdx >= 0 }]"
         placeholder="开始书写正文..."
         @keydown.tab.prevent="handleTabIndent"
       ></textarea>
@@ -1493,52 +1691,26 @@ onBeforeRouteLeave((_to, _from, next) => {
 
     <!-- CHAPTER mode with children scenes -->
     <div v-else class="editor-area chapter-mode" @mouseup="onTextareaMouseup">
-      <!-- Inline AI popup -->
-      <div v-if="inlinePopup" class="inline-popup" :style="{ top: inlinePos.top + 'px', left: inlinePos.left + 'px' }">
-        <div v-if="!inlineMode" class="inline-actions">
-          <button v-for="m in inlineModes" :key="m.value" class="inline-btn" @click="handleInlineAction(m.value)">{{ m.icon }} {{ m.label }}</button>
-          <button class="inline-close" @click="closeInlinePopup">&times;</button>
-        </div>
-        <div v-else-if="inlineMode === 'annotate'" class="inline-annotate">
-          <div class="inline-annotate-header">
-            <span>💬 添加批注</span>
-            <span class="inline-selected-preview">{{ inlineSelectedText }}</span>
-          </div>
-          <textarea v-model="annotateComment" class="inline-annotate-input" rows="3" placeholder="写下你的备注..."></textarea>
-          <div class="inline-annotate-meta">
-            <select v-model="annotateCategory" class="inline-select">
-              <option value="suggestion">建议</option>
-              <option value="grammar">语法</option>
-              <option value="style">文风</option>
-              <option value="plot_hole">剧情漏洞</option>
-              <option value="character">角色</option>
-            </select>
-            <select v-model="annotateSeverity" class="inline-select">
-              <option value="INFO">提示</option>
-              <option value="MINOR">轻微</option>
-              <option value="MAJOR">严重</option>
-            </select>
-          </div>
-          <div class="inline-result-actions">
-            <button class="btn-apply" :disabled="!annotateComment.trim() || annotating" @click="submitAnnotation">{{ annotating ? '提交中...' : '提交批注' }}</button>
-            <button class="btn-undo" @click="closeInlinePopup">取消</button>
-          </div>
-        </div>
-        <div v-else class="inline-result">
-          <div class="inline-loading" v-if="inlineLoading">AI 正在{{ inlineModes.find(m => m.value === inlineMode)?.label }}...</div>
-          <template v-else>
-            <div class="inline-diff">
-              <div class="inline-original">{{ inlineSelectedText }}</div>
-              <div class="inline-suggested">{{ inlineResult }}</div>
-            </div>
-            <div class="inline-result-actions">
-              <button class="btn-apply" @click="acceptInlineResult">采纳</button>
-              <button class="btn-undo" @click="closeInlinePopup">拒绝</button>
-            </div>
-          </template>
-          <div class="inline-mode-label">{{ inlineModes.find(m => m.value === inlineMode)?.label }}</div>
-        </div>
-      </div>
+      <InlinePopup
+        :visible="inlinePopup"
+        :mode="inlineMode"
+        :loading="inlineLoading"
+        :selected-text="inlineSelectedText"
+        :result="inlineResult"
+        :position="inlinePos"
+        :modes="inlineModes"
+        :annotate-comment="annotateComment"
+        :annotate-category="annotateCategory"
+        :annotate-severity="annotateSeverity"
+        :annotating="annotating"
+        @close="closeInlinePopup"
+        @select-mode="handleInlineAction"
+        @accept="acceptInlineResult"
+        @submit-annotation="submitAnnotation"
+        @update:annotate-comment="annotateComment = $event"
+        @update:annotate-category="annotateCategory = $event"
+        @update:annotate-severity="annotateSeverity = $event"
+      />
       <!-- 章正文：主写作区 -->
       <div class="chapter-body-section">
         <div class="section-label">
@@ -1548,13 +1720,13 @@ onBeforeRouteLeave((_to, _from, next) => {
               <option v-for="m in modeOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
             </select>
             <button class="btn-ai-sm" @click.stop="handleRewrite('chapter')">改写</button>
-            <button class="btn-ai-sm" @click.stop="handleAiContinue('chapter')">续写</button>
+            <button class="btn-ai-sm" @click.stop="handleAiContinue('chapter')">{{ chapterContent.trim() ? '续写' : '创作' }}</button>
           </template>
           <span v-else-if="genTarget === 'chapter' || rewriteTarget === 'chapter'" class="gen-inline">生成中...</span>
         </div>
         <textarea
           v-model="chapterContent"
-          class="write-textarea chapter-body"
+          :class="['write-textarea', 'chapter-body', { 'fix-highlight': inlinePopup && fixingIdx >= 0 }]"
           placeholder="在此书写本章正文…"
           @keydown.tab.prevent="
             const s = $event.target;
@@ -1581,7 +1753,7 @@ onBeforeRouteLeave((_to, _from, next) => {
             <span class="scene-meta">
               <template v-if="!generating && !rewriting">
                 <button class="btn-ai-sm" @click.stop="handleRewrite(scene.id)">{{ modeOptions.find(m => m.value === rewriteMode)?.label }}</button>
-                <button class="btn-ai-sm" @click.stop="handleAiContinue(scene.id)">续写</button>
+                <button class="btn-ai-sm" @click.stop="handleAiContinue(scene.id)">{{ (scene.content || '').trim() ? '续写' : '创作' }}</button>
               </template>
               <span v-else-if="genTarget === scene.id || rewriteTarget === scene.id" class="gen-inline">生成中...</span>
               <span class="scene-words">{{ countWords(scene.content) }} 字</span>
@@ -1591,7 +1763,7 @@ onBeforeRouteLeave((_to, _from, next) => {
           <textarea
             v-if="expandedScenes.has(scene.id)"
             v-model="scene.content"
-            class="write-textarea scene-body"
+            :class="['write-textarea', 'scene-body', { 'fix-highlight': inlinePopup && fixingIdx >= 0 }]"
             :placeholder="'书写「' + scene.title + '」…'"
             @keydown.tab.prevent="
               const s = $event.target;
@@ -1648,8 +1820,9 @@ onBeforeRouteLeave((_to, _from, next) => {
           </div>
           <div class="diff-container">
             <div v-for="(line, i) in diffLines" :key="i" class="diff-row" :class="line.type">
-              <div class="diff-a">{{ line.a }}</div>
-              <div class="diff-b">{{ line.b }}</div>
+              <span v-if="line.type === 'same'" class="diff-line diff-same">{{ line.text }}</span>
+              <span v-else-if="line.type === 'removed'" class="diff-line diff-removed">- {{ line.text }}</span>
+              <span v-else-if="line.type === 'added'" class="diff-line diff-added">+ {{ line.text }}</span>
             </div>
           </div>
         </div>
@@ -1778,6 +1951,38 @@ onBeforeRouteLeave((_to, _from, next) => {
 .status-badge.draft { background: var(--bg-surface-hover); color: var(--text-secondary); }
 .status-badge.published { background: var(--bg-success-soft); color: var(--color-success); }
 .saved-indicator { font-size: 12px; color: #059669; }
+
+/* Floating AI toolbar */
+.floating-toolbar {
+  position: fixed;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+  user-select: none;
+}
+.float-drag-handle {
+  width: 16px; height: 16px;
+  cursor: grab;
+  background: radial-gradient(circle, var(--text-secondary) 1px, transparent 1px) 0 0 / 3px 3px;
+  opacity: 0.5;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+.float-drag-handle:hover { opacity: 0.8; }
+.btn-ai-float { padding: 6px 14px; font-size: 13px; }
+.btn-ai-more-float { padding: 6px 10px; font-size: 13px; }
+.btn-consistency-float { padding: 6px 10px; font-size: 13px; }
+.btn-save-float { padding: 6px 14px; font-size: 13px; }
+.word-count-float { font-size: 12px; margin-left: 4px; }
+.float-gen-label { font-size: 13px; color: var(--color-brand); font-weight: 500; margin-right: 8px; }
+.btn-ai-stop-float { padding: 6px 14px; font-size: 13px; }
+
 .btn-save {
   padding: 8px 22px;
   background: var(--color-brand);
@@ -2122,6 +2327,44 @@ onBeforeRouteLeave((_to, _from, next) => {
   padding: 4px 10px; background: #f8fafc; border-radius: 4px;
 }
 
+/* ── Writing guide ── */
+.guide-card {
+  margin-bottom: 12px; padding: 12px 16px;
+  background: #fefce8; border: 1px solid #fde68a;
+  border-radius: 10px; max-height: 480px; overflow-y: auto;
+}
+.guide-card.collapsed { max-height: none; overflow: visible; }
+.guide-title {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 14px; font-weight: 700; color: #a16207; cursor: pointer;
+  user-select: none;
+}
+.guide-close {
+  padding: 2px 6px; font-size: 16px; font-weight: 600;
+  background: none; border: none; color: var(--text-secondary);
+  cursor: pointer; line-height: 1;
+}
+.guide-close:hover { color: var(--text-primary); }
+.guide-body { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+.guide-item {
+  padding: 10px 14px; background: #fffbeb; border-radius: 8px;
+  border: 1px solid #fde68a;
+}
+.guide-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.guide-dimension {
+  font-size: 13px; font-weight: 700; color: #92400e;
+  background: #fef3c7; padding: 2px 10px; border-radius: 12px;
+}
+.guide-severity { font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 10px; }
+.guide-severity.sev-high { background: #fee2e2; color: #991b1b; }
+.guide-severity.sev-medium { background: #fef3c7; color: #92400e; }
+.guide-severity.sev-low { background: #f0fdf4; color: #166534; }
+.guide-issue { font-size: 13px; color: var(--text-primary); line-height: 1.6; margin-bottom: 4px; }
+.guide-suggestion {
+  font-size: 13px; color: var(--color-success); line-height: 1.6;
+  padding-left: 10px; border-left: 2px solid var(--color-brand);
+}
+
 /* ── Consistency ── */
 .consistency-card {
   margin-bottom: 12px; padding: 12px 16px;
@@ -2168,6 +2411,20 @@ onBeforeRouteLeave((_to, _from, next) => {
 }
 .btn-fix-issue:hover { background: #f5f3ff; border-color: #7c3aed; }
 .btn-fix-issue:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-dismiss-issue {
+  padding: 2px 6px; font-size: 11px; font-weight: 400;
+  background: transparent; color: var(--text-muted); border: 1px solid transparent;
+  border-radius: 4px; cursor: pointer; font-family: inherit; white-space: nowrap; flex-shrink: 0;
+}
+.btn-dismiss-issue:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+
+.btn-dismiss-all {
+  padding: 2px 10px; font-size: 11px; font-weight: 500;
+  background: transparent; color: var(--text-muted); border: 1px solid var(--border-color);
+  border-radius: 4px; cursor: pointer; font-family: inherit; margin-left: auto;
+}
+.btn-dismiss-all:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
 
 /* ── Rewrite ── */
 .rewrite-select {
@@ -2254,6 +2511,10 @@ onBeforeRouteLeave((_to, _from, next) => {
 }
 .write-textarea.flash-highlight {
   animation: flashPulse 1.8s ease-out;
+}
+.write-textarea.fix-highlight::selection {
+  background: rgba(99, 102, 241, 0.3);
+  color: inherit;
 }
 @keyframes flashPulse {
   0%   { box-shadow: 0 0 0 0 transparent; }
@@ -2439,17 +2700,12 @@ onBeforeRouteLeave((_to, _from, next) => {
   padding: 12px 16px; border-bottom: 1px solid var(--border-color);
   font-size: 14px; font-weight: 500; flex-shrink: 0;
 }
-.diff-container { flex: 1; overflow-y: auto; }
-.diff-row { display: flex; border-bottom: 1px solid #f0f0f0; font-size: 12px; line-height: 1.6; min-height: 22px; }
-.diff-row.diff { background: #fef2f2; }
-.diff-row.same { background: transparent; }
-.diff-a, .diff-b {
-  flex: 1; min-width: 0; padding: 2px 8px; white-space: pre-wrap; word-break: break-all;
-  overflow-wrap: break-word;
-}
-.diff-a { border-right: 1px solid var(--border-color); }
-.diff-row.diff .diff-a { background: #fee2e2; }
-.diff-row.diff .diff-b { background: #dcfce7; }
+.diff-container { flex: 1; overflow-y: auto; font-family: 'Consolas', 'Courier New', monospace; }
+.diff-row { display: flex; font-size: 13px; line-height: 1.6; min-height: 22px; }
+.diff-line { flex: 1; padding: 1px 12px; white-space: pre-wrap; word-break: break-all; }
+.diff-same { color: var(--text-primary); }
+.diff-removed { background: #fee2e2; color: #b91c1c; }
+.diff-added { background: #dcfce7; color: #166534; }
 .version-info {
   display: flex; flex-direction: column; gap: 3px;
 }
@@ -2536,6 +2792,13 @@ onBeforeRouteLeave((_to, _from, next) => {
   min-width: 200px;
   max-width: 380px;
 }
+.inline-popup.dragging { cursor: grabbing; user-select: none; }
+.inline-drag-handle {
+  height: 6px; cursor: grab; background: var(--color-brand);
+  border-radius: 10px 10px 0 0; opacity: 0.4;
+}
+.inline-drag-handle:hover { opacity: 0.8; }
+.inline-popup.dragging .inline-drag-handle { opacity: 1; background: var(--color-brand); }
 .inline-actions {
   display: flex; gap: 4px; padding: 8px;
   align-items: center;
@@ -2567,17 +2830,15 @@ onBeforeRouteLeave((_to, _from, next) => {
   text-align: right;
 }
 .inline-diff {
-  display: flex; flex-direction: column; gap: 6px;
   max-height: 200px; overflow-y: auto; font-size: 13px; line-height: 1.6;
 }
-.inline-original {
-  padding: 8px; background: #fef2f2; border-radius: 6px;
-  color: #991b1b; white-space: pre-wrap; word-break: break-all;
+.inline-diff-view {
+  padding: 8px; background: var(--bg-surface); border-radius: 6px;
+  white-space: pre-wrap; word-break: break-all;
 }
-.inline-suggested {
-  padding: 8px; background: #f0fdf4; border-radius: 6px;
-  color: #166534; white-space: pre-wrap; word-break: break-all;
-}
+.diff-same { color: var(--text-primary); }
+.diff-remove { background: #fecaca; color: #991b1b; text-decoration: line-through; }
+.diff-add { background: #bbf7d0; color: #166534; }
 .inline-result-actions {
   display: flex; gap: 8px; margin-top: 8px;
 }
