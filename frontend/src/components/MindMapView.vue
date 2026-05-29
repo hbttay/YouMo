@@ -184,6 +184,7 @@ function getNodeUrl(node) {
               <span class="node-label">{{ node.title }}</span>
             </div>
             <div v-if="node.writing_goal" class="node-goal">{{ node.writing_goal }}</div>
+            <span v-if="node.word_count" class="node-word-badge">{{ node.word_count }} 字</span>
           </div>
         </template>
       </div>
@@ -214,6 +215,7 @@ function getNodeUrl(node) {
               class="node-write-link"
               @click.stop
             >写正文</router-link>
+            <span v-if="node.word_count" class="node-word-badge">{{ node.word_count }} 字</span>
           </div>
         </template>
       </div>
@@ -243,6 +245,7 @@ function getNodeUrl(node) {
               class="node-write-link"
               @click.stop
             >写正文</router-link>
+            <span v-if="node.word_count" class="node-word-badge">{{ node.word_count }} 字</span>
           </div>
         </template>
       </div>
@@ -353,6 +356,10 @@ function getNodeUrl(node) {
   word-break: break-word;
 }
 
+.node-word-badge {
+  font-size: 11px; color: #6b7280; font-weight: 500;
+  margin-left: 8px; white-space: nowrap; flex-shrink: 0;
+}
 .node-goal {
   margin-top: 6px;
   font-size: 12px;
